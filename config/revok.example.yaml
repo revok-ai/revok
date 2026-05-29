@@ -1,0 +1,57 @@
+# Revok example configuration
+# Copy to revok.yaml and adjust for your environment.
+# All parameters are required unless noted as optional.
+
+server:
+  # Address to bind the proxy listener on.
+  host: "127.0.0.1"
+  # TCP port for inbound agent traffic.
+  port: 8080
+  # Seconds to wait for the socket to bind before aborting startup.
+  startup_timeout_seconds: 10
+
+upstream:
+  # Base URL of the Mem0 instance to forward requests to.
+  mem0_url: "http://localhost:8000"
+  # HTTP methods that trigger the enrichment pipeline.
+  write_methods:
+    - "POST"
+    - "PUT"
+    - "PATCH"
+  # URL path prefixes that trigger the enrichment pipeline.
+  # Requests to any other path are forwarded unchanged (pass-through).
+  write_paths:
+    - "/v1/memories"
+
+entity_matcher:
+  # Named regex patterns for entity extraction.
+  # Patterns are applied in order; first match wins for a given span.
+  patterns:
+    - name: "person"
+      # Matches two-word capitalized names (e.g., "Alice Smith").
+      regex: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\b"
+    - name: "email"
+      regex: "[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+"
+    - name: "url"
+      regex: "https?://[^\\s]+"
+
+scoring:
+  # Half-life for the exponential decay formula (seconds).
+  # An entity not seen for half_life_seconds will have its score halved.
+  half_life_seconds: 86400   # 1 day
+  # Score boost added on each new signal referencing an entity.
+  signal_strength: 0.3
+  # Maximum possible score for any entity.
+  score_cap: 1.0
+
+state_store:
+  # Path to the SQLite WAL database file.
+  sqlite_path: "./revok_state.db"
+  # Maximum number of entity records kept in the in-memory hot layer.
+  # Least-recently-used entries are evicted when the limit is exceeded.
+  hot_layer_max_entries: 1000
+
+logging:
+  # Log level: DEBUG | INFO | WARNING | ERROR | CRITICAL
+  level: "INFO"
+  format: "%(asctime)s %(name)s %(levelname)s %(message)s"

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "revok"
+version = "0.1.0"
+description = "Transparent async HTTP proxy that enriches AI-agent memory writes with entity metadata"
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+requires-python = ">=3.11"
+authors = [{ name = "Revok Contributors" }]
+keywords = ["ai", "agent", "memory", "proxy", "entity-extraction"]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "aiohttp>=3.9,<4",
+    "aiosqlite>=0.20,<1",
+    "networkx>=3.2,<4",
+    "pyyaml>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.23,<1",
+]
+
+[project.scripts]
+revok = "revok.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["revok*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
