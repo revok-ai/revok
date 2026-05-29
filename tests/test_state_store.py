@@ -18,8 +18,9 @@
 
 import pytest
 
-from revok.config import StateStoreConfig
+from revok.config import ScoringConfig, StateStoreConfig
 from revok.models import EntityRecord
+from revok.scoring import ScoringEngine
 from revok.state_store import SqliteStateStore
 
 
@@ -111,3 +112,47 @@ async def test_records_survive_close_and_reopen(tmp_path):
     assert result is not None
     assert result.score == pytest.approx(0.77)
     await store2.close()
+
+
+async def test_decay_on_read_returns_decayed_score(tmp_path):
+    """get() applies read-time decay when scorer is configured (T030, acceptance scenario 4.3).
+
+    After exactly one half-life the returned score must be approximately
+    half the stored value.
+    """
+    import time
+
+    half_life = 10.0  # seconds
+    scorer = ScoringEngine(
+        ScoringConfig(half_life_seconds=half_life, signal_strength=1.0, score_cap=100.0)
+    )
+    cfg = StateStoreConfig(
+        sqlite_path=str(tmp_path / "decay.db"),
+        hot_layer_max_entries=10,
+    )
+    store = SqliteStateStore(cfg, scorer=scorer)
+    await store.open()
+
+    # Store a record whose last_seen is exactly one half-life in the past
+    stored_score = 1.0
+    now = time.time()
+    record = EntityRecord(
+        entity_key="alice",
+        score=stored_score,
+        last_seen=now - half_life,
+        signal_count=1,
+        pattern_name="person",
+    )
+    await store.put(record)
+
+    # Evict from hot layer so we exercise the SQLite path too
+    store._hot.clear()
+
+    result = await store.get("alice")
+    assert result is not None
+    # Score should be approximately stored_score / 2 after one half-life
+    assert result.score == pytest.approx(stored_score / 2, rel=0.05)
+    # Persisted score must NOT have been modified
+    assert result.last_seen == record.last_seen
+
+    await store.close()

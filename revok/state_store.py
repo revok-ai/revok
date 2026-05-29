@@ -26,12 +26,17 @@ Protocol using:
 from __future__ import annotations
 
 import logging
+import time
 from collections import OrderedDict
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
 from revok.config import StateStoreConfig
 from revok.models import EntityRecord
+
+if TYPE_CHECKING:
+    from revok.scoring import ScoringEngine
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +59,13 @@ class SqliteStateStore:
             ``hot_layer_max_entries``.
     """
 
-    def __init__(self, config: StateStoreConfig) -> None:
+    def __init__(
+        self,
+        config: StateStoreConfig,
+        scorer: ScoringEngine | None = None,
+    ) -> None:
         self._config = config
+        self._scorer = scorer
         self._db: aiosqlite.Connection | None = None
         self._hot: OrderedDict[str, EntityRecord] = OrderedDict()
 
@@ -89,7 +99,7 @@ class SqliteStateStore:
         # Hot layer hit
         if entity_key in self._hot:
             self._hot.move_to_end(entity_key)
-            return self._hot[entity_key]
+            return self._apply_decay(self._hot[entity_key])
 
         # SQLite fallback
         assert self._db is not None, "SqliteStateStore.open() must be called before get()"
@@ -110,11 +120,11 @@ class SqliteStateStore:
             signal_count=row[3],
             pattern_name=row[4],
         )
-        # Warm the hot layer with the fetched record
+        # Warm the hot layer with the raw (undecayed) record
         self._hot[entity_key] = record
         self._hot.move_to_end(entity_key)
         self._evict()
-        return record
+        return self._apply_decay(record)
 
     async def put(self, record: EntityRecord) -> None:
         """Persist *record* to SQLite and update the hot layer.
@@ -150,10 +160,62 @@ class SqliteStateStore:
         self._hot.move_to_end(record.entity_key)
         self._evict()
 
+    def _apply_decay(self, record: EntityRecord) -> EntityRecord:
+        """Return *record* with its score decayed to ``now`` if scorer is configured.
+
+        The persisted/hot-layer record is never modified — a new
+        :class:`~revok.models.EntityRecord` is returned with the decayed score.
+        """
+        if self._scorer is None:
+            return record
+        decayed = self._scorer.decay_at(record, time.time())
+        return EntityRecord(
+            entity_key=record.entity_key,
+            score=decayed,
+            last_seen=record.last_seen,
+            signal_count=record.signal_count,
+            pattern_name=record.pattern_name,
+        )
+
     def _evict(self) -> None:
         """Remove the oldest entry when the hot layer exceeds its max capacity."""
         while len(self._hot) > self._config.hot_layer_max_entries:
             self._hot.popitem(last=False)
+
+    async def list_all(
+        self, offset: int = 0, limit: int = 100
+    ) -> list[EntityRecord]:
+        """Return a paginated list of all stored entity records.
+
+        Records are returned in ascending ``entity_key`` order with read-time
+        decay applied when a scorer is configured.
+
+        Args:
+            offset: Number of records to skip.
+            limit:  Maximum number of records to return (capped by caller).
+
+        Returns:
+            List of :class:`~revok.models.EntityRecord` with current scores.
+        """
+        assert self._db is not None, "SqliteStateStore.open() must be called before list_all()"
+        async with self._db.execute(
+            "SELECT entity_key, score, last_seen, signal_count, pattern_name "
+            "FROM entity_records ORDER BY entity_key LIMIT ? OFFSET ?",
+            (limit, offset),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            self._apply_decay(
+                EntityRecord(
+                    entity_key=row[0],
+                    score=row[1],
+                    last_seen=row[2],
+                    signal_count=row[3],
+                    pattern_name=row[4],
+                )
+            )
+            for row in rows
+        ]
 
     async def close(self) -> None:
         """Close the SQLite connection. Idempotent."""

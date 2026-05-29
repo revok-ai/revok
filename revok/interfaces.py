@@ -112,6 +112,20 @@ class StateStore(Protocol):
         """
         ...
 
+    async def list_all(
+        self, offset: int = 0, limit: int = 100
+    ) -> list[EntityRecord]:
+        """Return a paginated list of all stored entity records.
+
+        Args:
+            offset: Number of records to skip (for pagination).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of EntityRecord instances, ordered by entity_key.
+        """
+        ...
+
     async def close(self) -> None:
         """Flush pending writes and release resources.
 

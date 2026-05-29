@@ -70,7 +70,7 @@ async def _run(config_path: str) -> None:
 
     matcher = EntityMatcher(config.entity_matcher)
     scorer = ScoringEngine(config.scoring)
-    store = SqliteStateStore(config.state_store)
+    store = SqliteStateStore(config.state_store, scorer=scorer)
     await store.open()
 
     app = build_app(config, store, matcher, scorer)

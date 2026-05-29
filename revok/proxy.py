@@ -24,6 +24,7 @@ the configured Mem0 upstream.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import time
@@ -214,6 +215,44 @@ def build_app(
         m.upper() for m in config.upstream.write_methods
     )
 
+    async def _handle_get_entity(
+        request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        """GET /v1/entities/{entity_key} — return the entity record or 404."""
+        entity_key = request.match_info["entity_key"]
+        record = await store.get(entity_key)
+        if record is None:
+            return aiohttp.web.Response(
+                status=404,
+                content_type="application/json",
+                body=json.dumps({"error": "not_found"}).encode(),
+            )
+        return aiohttp.web.Response(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(dataclasses.asdict(record)).encode(),
+        )
+
+    async def _handle_list_entities(
+        request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        """GET /v1/entities — paginated list of all entity records."""
+        try:
+            offset = max(0, int(request.rel_url.query.get("offset", "0")))
+            limit = min(max(1, int(request.rel_url.query.get("limit", "100"))), 500)
+        except ValueError:
+            return aiohttp.web.Response(
+                status=400,
+                content_type="application/json",
+                body=json.dumps({"error": "invalid_query_params"}).encode(),
+            )
+        records = await store.list_all(offset=offset, limit=limit)
+        return aiohttp.web.Response(
+            status=200,
+            content_type="application/json",
+            body=json.dumps([dataclasses.asdict(r) for r in records]).encode(),
+        )
+
     async def _handle(request: aiohttp.web.Request) -> aiohttp.web.Response:
         """Catch-all request handler — intercept writes, pass through reads."""
         body_bytes: bytes = await request.read()
@@ -258,5 +297,7 @@ def build_app(
         )
 
     app = aiohttp.web.Application()
+    app.router.add_get("/v1/entities/{entity_key}", _handle_get_entity)
+    app.router.add_get("/v1/entities", _handle_list_entities)
     app.router.add_route(aiohttp.hdrs.METH_ANY, "/{path_info:.*}", _handle)
     return app

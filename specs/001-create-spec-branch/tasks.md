@@ -118,13 +118,13 @@ description: "Task list for Revok MVP — Memory Signal Processor"
 
 **Independent Test**: Process several signals referencing a known entity, then query the state store directly and confirm entity records with timestamps and scores are present and reflect the decay model (spec story 4 independent test).
 
-- [ ] T029 [US4] Add `GET /v1/entities/{entity_key}` route to the aiohttp app in `revok/proxy.py`: call `store.get(entity_key)`, return 200 with JSON-serialised `EntityRecord` if found, 404 `{"error":"not_found"}` if `None` (acceptance scenarios 4.1 and 4.2) in `revok/proxy.py`
-- [ ] T030 [P] [US4] Add read-time decay computation to `store.get()` in `revok/state_store.py`: after fetching the raw `EntityRecord`, apply `score * exp(-λ * (now - last_seen))` using `ScoringEngine` before returning so the returned score always reflects current time (acceptance scenario 4.3) — note: persisted `score` is NOT updated on read-only access in `revok/state_store.py`
+- [X] T029 [US4] Add `GET /v1/entities/{entity_key}` route to the aiohttp app in `revok/proxy.py`: call `store.get(entity_key)`, return 200 with JSON-serialised `EntityRecord` if found, 404 `{"error":"not_found"}` if `None` (acceptance scenarios 4.1 and 4.2) in `revok/proxy.py`
+- [X] T030 [P] [US4] Add read-time decay computation to `store.get()` in `revok/state_store.py`: after fetching the raw `EntityRecord`, apply `score * exp(-λ * (now - last_seen))` using `ScoringEngine` before returning so the returned score always reflects current time (acceptance scenario 4.3) — note: persisted `score` is NOT updated on read-only access in `revok/state_store.py`
 
   > **Note**: `SqliteStateStore.get()` needs a reference to `ScoringEngine` to apply decay. Update `__init__` signature to accept optional `scorer: ScoringEngine | None = None` — if `None`, return raw score (used in tests that don't need decay).
 
-- [ ] T031 [P] [US4] Add `GET /v1/entities` route returning paginated JSON list of all `EntityRecord`s from the store (for operator inspection) in `revok/proxy.py`
-- [ ] T032 [P] [US4] Extend `tests/test_state_store.py` with decay-on-read test: store record at `t=0`, retrieve at `t=half_life`, confirm returned score equals approximately `initial_score / 2` in `tests/test_state_store.py`
+- [X] T031 [P] [US4] Add `GET /v1/entities` route returning paginated JSON list of all `EntityRecord`s from the store (for operator inspection) in `revok/proxy.py`
+- [X] T032 [P] [US4] Extend `tests/test_state_store.py` with decay-on-read test: store record at `t=0`, retrieve at `t=half_life`, confirm returned score equals approximately `initial_score / 2` in `tests/test_state_store.py`
 
 **Checkpoint**: `curl http://127.0.0.1:8080/v1/entities/alice` returns entity record after signals referencing "Alice" have been processed.
 
