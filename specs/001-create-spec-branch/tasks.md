@@ -16,11 +16,11 @@ description: "Task list for Revok MVP — Memory Signal Processor"
 
 **Purpose**: Project initialization, build system, and directory skeleton required before any source module can be written.
 
-- [ ] T001 Create `pyproject.toml` with AGPL v3 metadata, Python 3.11 requirement, and dependencies (aiohttp, aiosqlite, networkx, pyyaml) plus `[dev]` extras (pytest, pytest-asyncio) in `pyproject.toml`
-- [ ] T002 Create package entry point `revok/__init__.py` with version `0.1.0` and module-level logger in `revok/__init__.py`
-- [ ] T003 [P] Create `revok/__main__.py` with CLI entry point that accepts `--config <path>` argument and calls the proxy startup coroutine in `revok/__main__.py`
-- [ ] T004 [P] Create `tests/conftest.py` with shared pytest fixtures (tmp_path SQLite DB, minimal Config object, mock aiohttp server) in `tests/conftest.py`
-- [ ] T005 [P] Create annotated example config `config/revok.example.yaml` matching the full YAML schema documented in `specs/001-create-spec-branch/research.md` in `config/revok.example.yaml`
+- [X] T001 Create `pyproject.toml` with AGPL v3 metadata, Python 3.11 requirement, and dependencies (aiohttp, aiosqlite, networkx, pyyaml) plus `[dev]` extras (pytest, pytest-asyncio) in `pyproject.toml`
+- [X] T002 Create package entry point `revok/__init__.py` with version `0.1.0` and module-level logger in `revok/__init__.py`
+- [X] T003 [P] Create `revok/__main__.py` with CLI entry point that accepts `--config <path>` argument and calls the proxy startup coroutine in `revok/__main__.py`
+- [X] T004 [P] Create `tests/conftest.py` with shared pytest fixtures (tmp_path SQLite DB, minimal Config object, mock aiohttp server) in `tests/conftest.py`
+- [X] T005 [P] Create annotated example config `config/revok.example.yaml` matching the full YAML schema documented in `specs/001-create-spec-branch/research.md` in `config/revok.example.yaml`
 
 **Checkpoint**: Project installs with `pip install -e ".[dev]"` and `python -m revok --help` executes without error.
 
@@ -32,10 +32,10 @@ description: "Task list for Revok MVP — Memory Signal Processor"
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T006 Create all four Protocol interface classes (`SignalSource`, `MessageBus`, `StateStore`, `MemoryAdapter`) with full type annotations and docstrings exactly as specified in `specs/001-create-spec-branch/contracts/interfaces.md` in `revok/interfaces.py`
-- [ ] T007 [P] Create `Signal`, `Entity`, `EntityRecord`, `EnrichedPayload`, `MemoryAdapterResponse` dataclasses with all fields, constraints, and the `EnrichedPayload.to_upstream_dict()` method as specified in `specs/001-create-spec-branch/data-model.md` in `revok/models.py`
-- [ ] T008 [P] Create all Config dataclasses (`ServerConfig`, `UpstreamConfig`, `PatternConfig`, `EntityMatcherConfig`, `ScoringConfig`, `StateStoreConfig`, `LoggingConfig`, `Config`) as specified in `specs/001-create-spec-branch/data-model.md` in `revok/config.py` (data structures only — no loader logic yet)
-- [ ] T009 [P] Create `tests/test_models.py` with tests for `Signal` immutability (`frozen=True`), `Entity` normalization rule, `EntityRecord` field constraints, and `EnrichedPayload.to_upstream_dict()` wire format in `tests/test_models.py`
+- [X] T006 Create all four Protocol interface classes (`SignalSource`, `MessageBus`, `StateStore`, `MemoryAdapter`) with full type annotations and docstrings exactly as specified in `specs/001-create-spec-branch/contracts/interfaces.md` in `revok/interfaces.py`
+- [X] T007 [P] Create `Signal`, `Entity`, `EntityRecord`, `EnrichedPayload`, `MemoryAdapterResponse` dataclasses with all fields, constraints, and the `EnrichedPayload.to_upstream_dict()` method as specified in `specs/001-create-spec-branch/data-model.md` in `revok/models.py`
+- [X] T008 [P] Create all Config dataclasses (`ServerConfig`, `UpstreamConfig`, `PatternConfig`, `EntityMatcherConfig`, `ScoringConfig`, `StateStoreConfig`, `LoggingConfig`, `Config`) as specified in `specs/001-create-spec-branch/data-model.md` in `revok/config.py` (data structures only — no loader logic yet)
+- [X] T009 [P] Create `tests/test_models.py` with tests for `Signal` immutability (`frozen=True`), `Entity` normalization rule, `EntityRecord` field constraints, and `EnrichedPayload.to_upstream_dict()` wire format in `tests/test_models.py`
 
 **Checkpoint**: `pytest tests/test_models.py` passes. All Protocol classes are importable from `revok.interfaces`. All dataclasses importable from `revok.models` and `revok.config`.
 
@@ -47,10 +47,10 @@ description: "Task list for Revok MVP — Memory Signal Processor"
 
 **Independent Test**: Start Revok with two different YAML configs (different ports, different decay half-lives), confirm each instance is configured according to its own file — demonstrating the system reads and applies config at startup (spec story 3 independent test).
 
-- [ ] T010 [US3] Implement `load_config(path: str) -> Config` in `revok/config.py`: read YAML, validate all required keys, validate `server.port` (1–65535), `scoring.half_life_seconds > 0`, `scoring.score_cap > 0`, `upstream.mem0_url` is valid HTTP/HTTPS URL, `entity_matcher.patterns` non-empty with compilable regexes; raise `ConfigError` with actionable message on any violation (FR-001, FR-017) in `revok/config.py`
-- [ ] T011 [P] [US3] Implement `ConfigError` exception class with a `field` attribute and human-readable message in `revok/config.py`
-- [ ] T012 [P] [US3] Wire `revok/__main__.py` to call `load_config(args.config)` at startup; configure Python `logging` from `Config.logging`; abort with `SystemExit(1)` and printed `ConfigError` message if config is invalid (FR-017) in `revok/__main__.py`
-- [ ] T013 [P] [US3] Create `tests/test_config.py` with tests for: valid config loads all fields correctly, missing required key raises `ConfigError`, malformed YAML raises `ConfigError`, `half_life_seconds=0` raises `ConfigError`, invalid regex pattern raises `ConfigError` in `tests/test_config.py`
+- [X] T010 [US3] Implement `load_config(path: str) -> Config` in `revok/config.py`: read YAML, validate all required keys, validate `server.port` (1–65535), `scoring.half_life_seconds > 0`, `scoring.score_cap > 0`, `upstream.mem0_url` is valid HTTP/HTTPS URL, `entity_matcher.patterns` non-empty with compilable regexes; raise `ConfigError` with actionable message on any violation (FR-001, FR-017) in `revok/config.py`
+- [X] T011 [P] [US3] Implement `ConfigError` exception class with a `field` attribute and human-readable message in `revok/config.py`
+- [X] T012 [P] [US3] Wire `revok/__main__.py` to call `load_config(args.config)` at startup; configure Python `logging` from `Config.logging`; abort with `SystemExit(1)` and printed `ConfigError` message if config is invalid (FR-017) in `revok/__main__.py`
+- [X] T013 [P] [US3] Create `tests/test_config.py` with tests for: valid config loads all fields correctly, missing required key raises `ConfigError`, malformed YAML raises `ConfigError`, `half_life_seconds=0` raises `ConfigError`, invalid regex pattern raises `ConfigError` in `tests/test_config.py`
 
 **Checkpoint**: `pytest tests/test_config.py` passes. `python -m revok --config config/revok.example.yaml` loads config and logs startup without crash.
 
