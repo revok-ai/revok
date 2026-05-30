@@ -1,0 +1,35 @@
+server:
+  host: "0.0.0.0"
+  port: 7771
+  startup_timeout_seconds: 10
+  max_signal_size_bytes: 1048576
+
+upstream:
+  # Inside Docker Compose the Mem0 container is reachable as "mem0".
+  # Change to http://localhost:7770 when running Revok outside Docker.
+  mem0_url: "http://mem0:8000"
+  write_methods:
+    - "POST"
+    - "PUT"
+    - "PATCH"
+  write_paths:
+    - "/memories"
+
+entity_matcher:
+  patterns:
+    - name: "product"
+      regex: "\\bRedis Enterprise\\b"
+
+scoring:
+  # Short half-life makes decay visible within the demo's 10-second sleep.
+  half_life_seconds: 10
+  signal_strength: 0.8
+  score_cap: 1.0
+
+state_store:
+  sqlite_path: "/data/revok_demo.db"
+  hot_layer_max_entries: 500
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(name)s %(levelname)s %(message)s"
