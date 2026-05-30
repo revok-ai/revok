@@ -6,9 +6,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import AsyncIterator
+
+# On Windows, ProactorEventLoop can hang during teardown when there are pending
+# async I/O operations (e.g. from aiosqlite).  SelectorEventLoop closes cleanly.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import pytest
 import pytest_asyncio
@@ -81,3 +88,37 @@ def tmp_db_path(tmp_path: Path) -> str:
         str: Path string for a new SQLite database.
     """
     return str(tmp_path / "revok_test.db")
+
+
+# On Windows, Python's shutdown sequence blocks joining executor threads
+# (via concurrent.futures.thread._python_exit atexit handler) which keeps
+# the process alive in Git Bash / mintty.  Calling os._exit() in
+# pytest_unconfigure fires BEFORE sys.exit() is called, so Python's own
+# shutdown (thread-join, atexit handlers) never runs.
+_pytest_exit_code: int = 0
+
+
+def pytest_sessionfinish(
+    session: pytest.Session,
+    exitstatus: int | pytest.ExitCode,
+) -> None:
+    """Capture pytest exit status for use in pytest_unconfigure."""
+    global _pytest_exit_code
+    _pytest_exit_code = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Force immediate process exit on Windows/Git Bash after all cleanup.
+
+    trylast=True ensures all other plugins' pytest_unconfigure hooks (e.g.
+    pytest-asyncio event-loop teardown) run first.  os._exit() then
+    terminates the process hard, bypassing Python's thread-join phase.
+    """
+    if sys.platform == "win32":
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(_pytest_exit_code)
