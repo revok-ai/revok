@@ -156,3 +156,48 @@ async def test_decay_on_read_returns_decayed_score(tmp_path):
     assert result.last_seen == record.last_seen
 
     await store.close()
+
+
+async def test_list_all_returns_all_records(tmp_path):
+    """list_all() returns every stored record in entity_key order."""
+    cfg = make_config(tmp_path, name="list.db")
+    store = SqliteStateStore(cfg)
+    await store.open()
+
+    await store.put(make_record("charlie", score=0.3))
+    await store.put(make_record("alice", score=0.9))
+    await store.put(make_record("bob", score=0.5))
+
+    results = await store.list_all(offset=0, limit=100)
+    assert len(results) == 3
+    # Returned in entity_key ascending order
+    assert [r.entity_key for r in results] == ["alice", "bob", "charlie"]
+
+    await store.close()
+
+
+async def test_list_all_offset_and_limit(tmp_path):
+    """list_all() respects offset and limit pagination parameters."""
+    cfg = make_config(tmp_path, name="paginate.db")
+    store = SqliteStateStore(cfg)
+    await store.open()
+
+    for i in range(5):
+        await store.put(make_record(f"entity_{i:02d}", score=float(i) * 0.1))
+
+    page = await store.list_all(offset=1, limit=2)
+    assert len(page) == 2
+    assert page[0].entity_key == "entity_01"
+    assert page[1].entity_key == "entity_02"
+
+    await store.close()
+
+
+async def test_list_all_empty_store_returns_empty_list(tmp_path):
+    """list_all() on an empty store returns an empty list, not an error."""
+    cfg = make_config(tmp_path, name="empty.db")
+    store = SqliteStateStore(cfg)
+    await store.open()
+    results = await store.list_all()
+    assert results == []
+    await store.close()

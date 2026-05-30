@@ -194,3 +194,99 @@ async def test_write_unreachable_upstream_response_is_error(tmp_path: Path) -> N
 
     assert result.status == 502
     assert result.is_error is True
+
+
+# ---------------------------------------------------------------------------
+# T029 / T031: Entity read routes
+# ---------------------------------------------------------------------------
+
+
+async def test_get_entity_returns_record_after_write(tmp_path: Path) -> None:
+    """GET /v1/entities/{entity_key} returns 200 + JSON after a matching write."""
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                # First trigger entity creation via a write
+                await client.post("/v1/memories", json={"content": "Alice arrived"})
+                # Now fetch the entity record
+                resp = await client.get("/v1/entities/alice")
+                assert resp.status == 200
+                body = await resp.json()
+                assert body["entity_key"] == "alice"
+                assert "score" in body
+        finally:
+            await store.close()
+
+
+async def test_get_entity_returns_404_when_not_found(tmp_path: Path) -> None:
+    """GET /v1/entities/{entity_key} returns 404 JSON for unknown keys."""
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({}, status=200)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.get("/v1/entities/nobody")
+                assert resp.status == 404
+                body = await resp.json()
+                assert body.get("error") == "not_found"
+        finally:
+            await store.close()
+
+
+async def test_list_entities_returns_paginated_results(tmp_path: Path) -> None:
+    """GET /v1/entities returns a JSON list with offset/limit support."""
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                # Create two entities
+                await client.post("/v1/memories", json={"content": "Alice met Bob"})
+                resp = await client.get("/v1/entities?offset=0&limit=10")
+                assert resp.status == 200
+                body = await resp.json()
+                assert isinstance(body, list)
+                assert len(body) >= 1
+                # Each item must have entity_key
+                for item in body:
+                    assert "entity_key" in item
+        finally:
+            await store.close()

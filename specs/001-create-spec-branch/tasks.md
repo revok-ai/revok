@@ -136,11 +136,11 @@ description: "Task list for Revok MVP — Memory Signal Processor"
 
 **Independent Test**: Clone on a clean machine, follow the README, run `pytest`, all tests pass (spec story 5 independent test).
 
-- [ ] T033 Create `README.md` with: project description (AGPL v3), architecture diagram (from `specs/001-create-spec-branch/quickstart.md`), prerequisites, install steps (`pip install -e ".[dev]"`), usage (`python -m revok --config ...`), test suite (`pytest`), YAML config reference, and contributing section in `README.md`
-- [ ] T034 [P] [US5] Verify test coverage: confirm `tests/test_config.py`, `tests/test_models.py`, `tests/test_entity_matcher.py`, `tests/test_scoring.py`, `tests/test_state_store.py`, `tests/test_signal_queue.py`, `tests/test_proxy.py`, `tests/test_metadata_writer.py` all exist and each has at least one test that exercises the module's primary behavior (FR-013, SC-004); add any missing tests in `tests/`
-- [ ] T035 [P] [US5] Add AGPL v3 license header comment to all `.py` files in `revok/` and `tests/` that are missing it (Constitution § I) in `revok/` and `tests/`
-- [ ] T036 [P] [US5] Audit all public functions and methods across `revok/` — add any missing type annotations or docstrings (FR-015, acceptance scenario 5.3) in `revok/`
-- [ ] T037 [P] [US5] Add `NetworkX` causal graph scaffold: create `CausalGraph` class with `add_entity(entity_id: str, score: float) -> None` and `add_relation(source_id: str, target_id: str) -> None` backed by `nx.DiGraph`; call `add_entity` from `enrich()` in `metadata_writer.py` (constitution § V — scaffold only, no traversal) in `revok/causal_graph.py`
+- [X] T033 Create `README.md` with: project description (AGPL v3), architecture diagram (from `specs/001-create-spec-branch/quickstart.md`), prerequisites, install steps (`pip install -e ".[dev]"`), usage (`python -m revok --config ...`), test suite (`pytest`), YAML config reference, and contributing section in `README.md`
+- [X] T034 [P] [US5] Verify test coverage: confirm `tests/test_config.py`, `tests/test_models.py`, `tests/test_entity_matcher.py`, `tests/test_scoring.py`, `tests/test_state_store.py`, `tests/test_signal_queue.py`, `tests/test_proxy.py`, `tests/test_metadata_writer.py` all exist and each has at least one test that exercises the module's primary behavior (FR-013, SC-004); add any missing tests in `tests/`
+- [X] T035 [P] [US5] Add AGPL v3 license header comment to all `.py` files in `revok/` and `tests/` that are missing it (Constitution § I) in `revok/` and `tests/`
+- [X] T036 [P] [US5] Audit all public functions and methods across `revok/` — add any missing type annotations or docstrings (FR-015, acceptance scenario 5.3) in `revok/`
+- [X] T037 [P] [US5] Add `NetworkX` causal graph scaffold: create `CausalGraph` class with `add_entity(entity_id: str, score: float) -> None` and `add_relation(source_id: str, target_id: str) -> None` backed by `nx.DiGraph`; call `add_entity` from `enrich()` in `metadata_writer.py` (constitution § V — scaffold only, no traversal) in `revok/causal_graph.py`
 
 **Checkpoint**: `pytest` passes with zero failures across all test files. `README.md` exists and is complete.
 

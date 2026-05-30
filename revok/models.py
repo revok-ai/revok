@@ -109,12 +109,12 @@ class EnrichedPayload:
         processed_at: Unix epoch seconds of enrichment completion.
     """
 
-    original_body: dict
+    original_body: dict[str, object]
     entities: list[EntityRecord]
     revok_version: str
     processed_at: float
 
-    def to_upstream_dict(self) -> dict:
+    def to_upstream_dict(self) -> dict[str, object]:
         """Merge original body with the ``x_revok`` metadata block.
 
         Returns:

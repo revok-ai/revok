@@ -32,6 +32,7 @@ from revok.entity_matcher import EntityMatcher
 from revok.interfaces import StateStore
 from revok.models import EnrichedPayload, EntityRecord, Signal
 from revok.scoring import ScoringEngine
+from revok.causal_graph import CausalGraph
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ async def enrich(
     now = time.time()
 
     # --- Step 1: parse original body ----------------------------------------
-    original_body: dict = {}
+    original_body: dict[str, object] = {}
     try:
         if signal.original_body:
             parsed = json.loads(signal.original_body)
@@ -82,6 +83,7 @@ async def enrich(
 
     # --- Steps 2–3: extract, score, persist ---------------------------------
     scored_records: list[EntityRecord] = []
+    graph = CausalGraph()
     try:
         entities = matcher.match(signal.raw_content)
         for entity in entities:
@@ -97,6 +99,7 @@ async def enrich(
             )
             await store.put(record)
             scored_records.append(record)
+            graph.add_entity(entity.key, new_score)
     except Exception:
         logger.error(
             "Enrichment pipeline failed for signal from %s",
