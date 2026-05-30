@@ -258,6 +258,30 @@ def build_app(
         body_bytes: bytes = await request.read()
         http_path: str = str(request.rel_url)
 
+        # T038: Reject payloads that exceed the configured inbound size limit (SC-010)
+        if len(body_bytes) > config.server.max_signal_size_bytes:
+            logger.warning(
+                "Signal payload too large: %d bytes (limit=%d); returning 413 "
+                "(path=%s, method=%s)",
+                len(body_bytes),
+                config.server.max_signal_size_bytes,
+                http_path,
+                request.method,
+            )
+            return aiohttp.web.Response(
+                status=413,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "error": "payload_too_large",
+                        "detail": (
+                            f"Request body exceeds maximum size of "
+                            f"{config.server.max_signal_size_bytes} bytes."
+                        ),
+                    }
+                ).encode(),
+            )
+
         # FR-004: Normalise raw request into Signal before any other processing
         signal = Signal(
             raw_content=body_bytes.decode("utf-8", errors="replace"),
@@ -277,9 +301,21 @@ def build_app(
             )
 
             if is_write:
-                # enrich() is internally resilient and never raises (scenario 1.4)
-                enriched = await enrich(signal, matcher, scorer, store)
-                result = await adapter.write(enriched, http_path)
+                # T041: Guard — only enrich if the body is parseable as JSON
+                try:
+                    json.loads(body_bytes)
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "Write request body is not valid JSON; forwarding raw to upstream "
+                        "(path=%s, size=%d bytes)",
+                        http_path,
+                        len(body_bytes),
+                    )
+                    result = await adapter.forward(signal)
+                else:
+                    # enrich() is internally resilient and never raises (scenario 1.4)
+                    enriched = await enrich(signal, matcher, scorer, store)
+                    result = await adapter.write(enriched, http_path)
             else:
                 result = await adapter.forward(signal)
 

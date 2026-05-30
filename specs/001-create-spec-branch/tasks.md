@@ -150,11 +150,11 @@ description: "Task list for Revok MVP — Memory Signal Processor"
 
 **Purpose**: Final wiring, edge cases, and hardening across all modules.
 
-- [ ] T038 Add `max_signal_size_bytes` validation to the proxy request handler: if request body exceeds configured limit, return 413 and log warning without forwarding (edge case: signal payload exceeds max size) in `revok/proxy.py`
-- [ ] T039 [P] Add startup validation that `scoring.half_life_seconds > 0` is enforced at `ScoringEngine.__init__` time (not only at config-load time) — raises `ValueError` with descriptive message (edge case: decay half-life set to zero or negative) in `revok/scoring.py`
-- [ ] T040 [P] Add graceful SQLite corruption handling in `SqliteStateStore.open()`: catch `sqlite3.DatabaseError`, log `CRITICAL`, and raise `RuntimeError` with actionable message so startup aborts cleanly (edge case: SQLite WAL file corrupted at startup) in `revok/state_store.py`
-- [ ] T041 [P] Add `Content-Type: application/json` guard in proxy handler: if write-request body is not parseable as JSON, forward the raw body unchanged (do not enrich) and log a warning at `WARNING` level (edge case: Mem0 response contains unexpected/malformed JSON) in `revok/proxy.py`
-- [ ] T042 Run `python -m revok --config config/revok.example.yaml` end-to-end and validate `quickstart.md` steps produce expected output within 5 seconds (SC-005) — update `quickstart.md` if any step is incorrect in `specs/001-create-spec-branch/quickstart.md`
+- [X] T038 Add `max_signal_size_bytes` validation to the proxy request handler: if request body exceeds configured limit, return 413 and log warning without forwarding (edge case: signal payload exceeds max size) in `revok/proxy.py`
+- [X] T039 [P] Add startup validation that `scoring.half_life_seconds > 0` is enforced at `ScoringEngine.__init__` time (not only at config-load time) — raises `ValueError` with descriptive message (edge case: decay half-life set to zero or negative) in `revok/scoring.py`
+- [X] T040 [P] Add graceful SQLite corruption handling in `SqliteStateStore.open()`: catch `sqlite3.DatabaseError`, log `CRITICAL`, and raise `RuntimeError` with actionable message so startup aborts cleanly (edge case: SQLite WAL file corrupted at startup) in `revok/state_store.py`
+- [X] T041 [P] Add `Content-Type: application/json` guard in proxy handler: if write-request body is not parseable as JSON, forward the raw body unchanged (do not enrich) and log a warning at `WARNING` level (edge case: Mem0 response contains unexpected/malformed JSON) in `revok/proxy.py`
+- [X] T042 Run `python -m revok --config config/revok.example.yaml` end-to-end and validate `quickstart.md` steps produce expected output within 5 seconds (SC-005) — update `quickstart.md` if any step is incorrect in `specs/001-create-spec-branch/quickstart.md`
 
 ---
 

@@ -46,6 +46,11 @@ class ScoringEngine:
     """
 
     def __init__(self, config: ScoringConfig) -> None:
+        if config.half_life_seconds <= 0:
+            raise ValueError(
+                f"ScoringEngine: half_life_seconds must be > 0; "
+                f"got {config.half_life_seconds!r}"
+            )
         self._signal_strength = config.signal_strength
         self._score_cap = config.score_cap
         self._lambda = math.log(2) / config.half_life_seconds

@@ -102,3 +102,24 @@ def test_decay_at_half_life_halves_score(engine):
     record = make_record(score=0.8, last_seen=0.0)
     decayed = engine.decay_at(record, now=HALF_LIFE)
     assert decayed == pytest.approx(0.4, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# T039: ScoringEngine.__init__ raises ValueError on bad half_life
+# ---------------------------------------------------------------------------
+
+
+def test_zero_half_life_raises_value_error():
+    """half_life_seconds=0 must raise ValueError at construction time."""
+    with pytest.raises(ValueError, match="half_life_seconds must be > 0"):
+        ScoringEngine(
+            ScoringConfig(half_life_seconds=0.0, signal_strength=0.3, score_cap=1.0)
+        )
+
+
+def test_negative_half_life_raises_value_error():
+    """Negative half_life_seconds must raise ValueError at construction time."""
+    with pytest.raises(ValueError, match="half_life_seconds must be > 0"):
+        ScoringEngine(
+            ScoringConfig(half_life_seconds=-1.0, signal_strength=0.3, score_cap=1.0)
+        )

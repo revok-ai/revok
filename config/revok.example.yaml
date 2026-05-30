@@ -9,6 +9,9 @@ server:
   port: 8080
   # Seconds to wait for the socket to bind before aborting startup.
   startup_timeout_seconds: 10
+  # Maximum request body size in bytes. Requests exceeding this limit are
+  # rejected with HTTP 413. Default: 1 MiB (1048576). Must be > 0.
+  max_signal_size_bytes: 1048576
 
 upstream:
   # Base URL of the Mem0 instance to forward requests to.

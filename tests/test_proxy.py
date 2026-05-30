@@ -58,6 +58,36 @@ def _config_with_upstream(mem0_url: str, tmp_path: Path) -> Config:
     )
 
 
+def _config_with_size_limit(mem0_url: str, tmp_path: Path, max_bytes: int) -> Config:
+    """Return a Config with a custom max_signal_size_bytes limit."""
+    return Config(
+        server=ServerConfig(
+            host="127.0.0.1",
+            port=8080,
+            startup_timeout_seconds=5.0,
+            max_signal_size_bytes=max_bytes,
+        ),
+        upstream=UpstreamConfig(
+            mem0_url=mem0_url,
+            write_methods=["POST"],
+            write_paths=["/v1/memories"],
+        ),
+        entity_matcher=EntityMatcherConfig(
+            patterns=[PatternConfig(name="person", regex=r"\b[A-Z][a-z]+\b")]
+        ),
+        scoring=ScoringConfig(
+            half_life_seconds=86400.0,
+            signal_strength=0.3,
+            score_cap=1.0,
+        ),
+        state_store=StateStoreConfig(
+            sqlite_path=str(tmp_path / "size_limit_test.db"),
+            hot_layer_max_entries=10,
+        ),
+        logging=LoggingConfig(level="WARNING", format="%(levelname)s %(message)s"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # T026: Proxy integration tests using TestServer as mock Mem0
 # ---------------------------------------------------------------------------
@@ -290,3 +320,92 @@ async def test_list_entities_returns_paginated_results(tmp_path: Path) -> None:
                     assert "entity_key" in item
         finally:
             await store.close()
+
+
+# ---------------------------------------------------------------------------
+# T038: 413 when payload exceeds max_signal_size_bytes
+# ---------------------------------------------------------------------------
+
+
+async def test_oversized_payload_returns_413(tmp_path: Path) -> None:
+    """Proxy returns 413 and does NOT forward when body exceeds size limit."""
+    forwarded: list[bytes] = []
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        forwarded.append(await request.read())
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        # Set a very small limit so any real payload exceeds it
+        config = _config_with_size_limit(mem0_url, tmp_path, max_bytes=10)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.post(
+                    "/v1/memories",
+                    data=b"x" * 100,  # 100 bytes > 10 byte limit
+                    headers={"Content-Type": "application/json"},
+                )
+                assert resp.status == 413
+                body = await resp.json()
+                assert body.get("error") == "payload_too_large"
+        finally:
+            await store.close()
+
+    # Upstream must NOT have received the request
+    assert len(forwarded) == 0
+
+
+# ---------------------------------------------------------------------------
+# T041: Non-JSON write body is forwarded raw without enrichment
+# ---------------------------------------------------------------------------
+
+
+async def test_non_json_write_is_forwarded_raw(tmp_path: Path) -> None:
+    """Write with non-JSON body is forwarded unchanged; no x_revok block added."""
+    received: list[dict] = []
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        raw = await request.read()
+        received.append({"raw": raw, "path": request.path})
+        return web.json_response({"result": "ok"}, status=200)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                raw_body = b"not-json-at-all"
+                resp = await client.post(
+                    "/v1/memories",
+                    data=raw_body,
+                    headers={"Content-Type": "text/plain"},
+                )
+                # Should be forwarded; upstream returned 200
+                assert resp.status == 200
+        finally:
+            await store.close()
+
+    # Body must reach upstream unchanged
+    assert len(received) == 1
+    assert received[0]["raw"] == raw_body
+    # Must NOT contain x_revok enrichment
+    assert b"x_revok" not in received[0]["raw"]

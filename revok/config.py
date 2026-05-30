@@ -44,11 +44,14 @@ class ServerConfig:
         host: Bind address.
         port: TCP port (1–65535).
         startup_timeout_seconds: Seconds to wait for socket bind before aborting.
+        max_signal_size_bytes: Maximum request body size (bytes) before returning 413.
+            Defaults to 1 MiB (1_048_576). Must be > 0.
     """
 
     host: str
     port: int
     startup_timeout_seconds: float
+    max_signal_size_bytes: int = 1_048_576
 
 
 @dataclass(frozen=True)
@@ -232,10 +235,15 @@ def load_config(path: str) -> Config:
     if not isinstance(startup_timeout, (int, float)) or float(startup_timeout) <= 0:
         raise ConfigError("server.startup_timeout_seconds must be a positive number.")
 
+    max_signal_size = srv.get("max_signal_size_bytes", 1_048_576)
+    if not isinstance(max_signal_size, int) or max_signal_size <= 0:
+        raise ConfigError("server.max_signal_size_bytes must be a positive integer.")
+
     server_cfg = ServerConfig(
         host=str(host),
         port=int(port),
         startup_timeout_seconds=float(startup_timeout),
+        max_signal_size_bytes=int(max_signal_size),
     )
 
     # --- upstream ---

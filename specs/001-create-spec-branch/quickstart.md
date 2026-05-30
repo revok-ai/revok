@@ -43,7 +43,7 @@ server:
   port: 8080
 ```
 
-All other values have working defaults. See `config/revok.example.yaml` for the full schema with comments.
+All other values have working defaults (including `server.max_signal_size_bytes: 1048576` for the 1 MiB request-body limit). See `config/revok.example.yaml` for the full schema with comments.
 
 ---
 
@@ -137,5 +137,7 @@ AI Agent
 | `ConfigError: mem0_url is required` | Set `upstream.mem0_url` in your YAML config |
 | `ConfigError: half_life_seconds must be > 0` | Check `scoring.half_life_seconds` in config |
 | `502 Bad Gateway` on requests | Mem0 is unreachable — check `upstream.mem0_url` and that Mem0 is running |
+| `413 Payload Too Large` on writes | Request body exceeds `server.max_signal_size_bytes` (default 1 MiB); increase the limit or reduce the payload |
 | `sqlite3.OperationalError` on startup | Check that the directory for `state_store.sqlite_path` exists and is writable |
+| `RuntimeError: State store database is corrupted` | Delete or restore `state_store.sqlite_path` and restart |
 | Entities not extracted | Verify `entity_matcher.patterns` regexes in config; test with `python -c "import re; print(re.findall(r'YOUR_PATTERN', 'test text'))"` |

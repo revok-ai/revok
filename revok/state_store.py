@@ -26,6 +26,7 @@ Protocol using:
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING
@@ -81,6 +82,17 @@ class SqliteStateStore:
             await self._db.execute("PRAGMA synchronous=NORMAL;")
             await self._db.execute(_DDL)
             await self._db.commit()
+        except sqlite3.DatabaseError as exc:
+            logger.critical(
+                "State store database at '%s' is corrupted or unreadable: %s. "
+                "Delete or restore the file and restart.",
+                self._config.sqlite_path,
+                exc,
+            )
+            raise RuntimeError(
+                f"State store database is corrupted at '{self._config.sqlite_path}'. "
+                "Delete or restore the file and restart Revok."
+            ) from exc
         except Exception as exc:
             logger.critical("Failed to open state store at %s: %s", self._config.sqlite_path, exc)
             raise

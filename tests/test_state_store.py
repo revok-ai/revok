@@ -16,6 +16,8 @@
 
 """Tests for revok.state_store.SqliteStateStore."""
 
+import sqlite3
+
 import pytest
 
 from revok.config import ScoringConfig, StateStoreConfig
@@ -201,3 +203,24 @@ async def test_list_all_empty_store_returns_empty_list(tmp_path):
     results = await store.list_all()
     assert results == []
     await store.close()
+
+
+# ---------------------------------------------------------------------------
+# T040: SQLite corruption raises RuntimeError
+# ---------------------------------------------------------------------------
+
+
+async def test_corrupted_db_raises_runtime_error(tmp_path):
+    """open() raises RuntimeError when the database file is corrupted (SC-009)."""
+    db_path = tmp_path / "corrupted.db"
+    # Write non-SQLite bytes so aiosqlite raises sqlite3.DatabaseError on open
+    db_path.write_bytes(b"this is not a valid sqlite3 database file\x00\xff\xfe")
+
+    cfg = StateStoreConfig(
+        sqlite_path=str(db_path),
+        hot_layer_max_entries=10,
+    )
+    store = SqliteStateStore(cfg)
+
+    with pytest.raises(RuntimeError, match="corrupted"):
+        await store.open()
