@@ -14,14 +14,27 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-"""Exponential decay scoring engine for the Revok pipeline.
+"""Confidence/pressure scoring engine for the Revok pipeline.
 
-The decay formula (from ``specs/001-create-spec-branch/research.md``):
+Confidence model: signals *degrade* confidence (external change detected);
+time *recovers* confidence toward ``score_cap`` (stable world = trustworthy
+memory).
+
+Recovery formula (between signals — called by ``decay_at``):
 
     λ = ln(2) / half_life_seconds
-    score_decayed = existing.score * exp(-λ * Δt)
-    score_new     = score_decayed + signal_strength
-    score_new     = min(score_new, score_cap)
+    gap = score_cap - current_score
+    gap_recovered = gap × exp(-λ × Δt)
+    score_recovered = score_cap - gap_recovered
+
+Degradation formula (signal arrives — called by ``score``):
+
+    score_new = score_recovered - signal_strength
+    score_new = max(0.0, score_new)
+
+First signal (no prior record):
+
+    score_new = max(0.0, score_cap - signal_strength)
 """
 
 from __future__ import annotations
@@ -56,12 +69,18 @@ class ScoringEngine:
         self._lambda = math.log(2) / config.half_life_seconds
 
     def score(self, existing: EntityRecord | None, now: float) -> float:
-        """Compute the new score for an entity after a signal.
+        """Compute the new confidence score after a signal arrives.
 
-        If *existing* is ``None`` (first signal for the entity) the score
-        equals ``signal_strength`` (capped at ``score_cap``).  Otherwise the
-        previous score is first decayed according to elapsed time before
-        adding the signal boost.
+        Signals degrade confidence (external change detected).  Between signals,
+        confidence recovers toward ``score_cap`` (stable world = trustworthy
+        memory).
+
+        For the very first signal (``existing`` is ``None``) the score is
+        ``max(0.0, score_cap - signal_strength)``.
+
+        For subsequent signals the previous score is first recovered toward
+        ``score_cap`` according to elapsed time, then reduced by
+        ``signal_strength``.
 
         Args:
             existing: Current persisted ``EntityRecord``, or ``None``.
@@ -71,24 +90,27 @@ class ScoringEngine:
             New score in the range ``[0.0, score_cap]``.
         """
         if existing is None:
-            return min(self._signal_strength, self._score_cap)
+            return max(0.0, self._score_cap - self._signal_strength)
 
         delta_t = max(0.0, now - existing.last_seen)
-        score_decayed = existing.score * math.exp(-self._lambda * delta_t)
-        score_new = score_decayed + self._signal_strength
-        return min(score_new, self._score_cap)
+        gap = self._score_cap - existing.score
+        score_recovered = self._score_cap - gap * math.exp(-self._lambda * delta_t)
+        return max(0.0, score_recovered - self._signal_strength)
 
     def decay_at(self, record: EntityRecord, now: float) -> float:
-        """Return the current decayed score without adding a signal boost.
+        """Return the current recovered confidence without applying a new signal.
 
-        Used for read-time score display (Phase 6, T030).
+        Used for read-time score display (Phase 6, T030).  Confidence grows
+        toward ``score_cap`` as time passes with no new signals (stable world).
 
         Args:
             record: The stored ``EntityRecord``.
             now: Current Unix epoch timestamp in seconds.
 
         Returns:
-            Decayed score (no signal boost applied).
+            Recovered score in ``[0.0, score_cap]`` (no signal degradation
+            applied).
         """
         delta_t = max(0.0, now - record.last_seen)
-        return record.score * math.exp(-self._lambda * delta_t)
+        gap = self._score_cap - record.score
+        return self._score_cap - gap * math.exp(-self._lambda * delta_t)

@@ -117,16 +117,17 @@ async def test_records_survive_close_and_reopen(tmp_path):
 
 
 async def test_decay_on_read_returns_decayed_score(tmp_path):
-    """get() applies read-time decay when scorer is configured (T030, acceptance scenario 4.3).
+    """get() applies read-time recovery when scorer is configured (T030, acceptance scenario 4.3).
 
-    After exactly one half-life the returned score must be approximately
-    half the stored value.
+    After exactly one half-life the gap between the stored score and score_cap
+    is halved (score moves halfway toward score_cap).
     """
     import time
 
     half_life = 10.0  # seconds
+    score_cap = 100.0
     scorer = ScoringEngine(
-        ScoringConfig(half_life_seconds=half_life, signal_strength=1.0, score_cap=100.0)
+        ScoringConfig(half_life_seconds=half_life, signal_strength=1.0, score_cap=score_cap)
     )
     cfg = StateStoreConfig(
         sqlite_path=str(tmp_path / "decay.db"),
@@ -152,8 +153,10 @@ async def test_decay_on_read_returns_decayed_score(tmp_path):
 
     result = await store.get("alice")
     assert result is not None
-    # Score should be approximately stored_score / 2 after one half-life
-    assert result.score == pytest.approx(stored_score / 2, rel=0.05)
+    # After one half-life the gap to score_cap is halved:
+    # expected = score_cap - (score_cap - stored_score) / 2 = 50.5
+    expected_score = score_cap - (score_cap - stored_score) / 2.0
+    assert result.score == pytest.approx(expected_score, rel=0.05)
     # Persisted score must NOT have been modified
     assert result.last_seen == record.last_seen
 

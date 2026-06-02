@@ -108,8 +108,8 @@ async def test_enrichment_failure_does_not_raise(scorer, store):
     assert payload.entities == []
 
 
-async def test_second_signal_produces_higher_score(matcher, scorer, store):
-    """Two successive signals for the same entity accumulate a higher score."""
+async def test_second_signal_produces_lower_score(matcher, scorer, store):
+    """Two successive signals for the same entity degrade confidence further."""
     signal = make_signal("Alice was here")
 
     payload1 = await enrich(signal, matcher, scorer, store)
@@ -118,7 +118,7 @@ async def test_second_signal_produces_higher_score(matcher, scorer, store):
     payload2 = await enrich(signal, matcher, scorer, store)
     score2 = payload2.entities[0].score
 
-    assert score2 > score1
+    assert score2 < score1
 
 
 async def test_non_json_body_falls_back_to_empty_dict(matcher, scorer, store):
