@@ -1,0 +1,1163 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Revok Pricing Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: #1a1d27;
+      border-bottom: 1px solid #2a2d3a;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; color: #fff; }
+    .conn-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .conn-dot.ok  { background: #22c55e; }
+    .conn-dot.err { background: #ef4444; }
+    #conn-label { font-size: 0.8rem; color: #888; }
+
+    /* ── Main layout ── */
+    main {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      padding: 16px 24px;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2a2d3a;
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .card h2 {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 14px;
+    }
+    .kv { margin-bottom: 10px; }
+    .kv label { font-size: 0.75rem; color: #888; display: block; margin-bottom: 2px; }
+    .kv .val { font-size: 1.1rem; font-weight: 600; color: #fff; }
+    .kv .val.mono { font-family: monospace; font-size: 0.95rem; }
+
+    /* badge */
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 99px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge.match  { background: #14532d; color: #86efac; }
+    .badge.differ { background: #7f1d1d; color: #fca5a5; }
+    .badge.unknown { background: #374151; color: #9ca3af; }
+
+    /* ── Confidence gauge ── */
+    .gauge-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 10px 0 16px;
+    }
+    .gauge-wrap svg { display: block; }
+    #gauge-label {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+    #gauge-status {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 2px;
+    }
+
+    /* ── Agent response cards ── */
+    .agent-card {
+      background: #12141f;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 12px;
+      border-left: 3px solid #374151;
+    }
+    .agent-card.no-revok  { border-left-color: #ef4444; }
+    .agent-card.with-revok { border-left-color: #22c55e; }
+    .agent-card h3 {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 8px;
+    }
+    .agent-card.no-revok  h3 { color: #f87171; }
+    .agent-card.with-revok h3 { color: #4ade80; }
+    .agent-card p { font-size: 0.85rem; line-height: 1.5; color: #cbd5e1; }
+    .agent-card .memory-quote {
+      margin-top: 8px;
+      font-size: 0.75rem;
+      color: #64748b;
+      font-style: italic;
+    }
+    .agent-banner {
+      margin-top: 8px;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .agent-banner.verified  { background: #14532d; color: #86efac; }
+    .agent-banner.degraded  { background: #78350f; color: #fde68a; }
+    .agent-banner.stale     { background: #7f1d1d; color: #fca5a5; }
+    .agent-banner.fresh     { background: #1e3a5f; color: #93c5fd; }
+
+    /* ── Controls ── */
+    .controls-section {
+      padding: 16px 24px 20px;
+      background: #0d0f1a;
+      border-bottom: 1px solid #1e2535;
+    }
+    .controls-section h2 {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 12px;
+    }
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    button.btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 18px;
+      border: none;
+      border-radius: 7px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.btn:hover:not(:disabled) { opacity: 0.85; }
+    .btn-blue   { background: #2563eb; color: #fff; }
+    .btn-orange { background: #ea580c; color: #fff; }
+    .btn-red    { background: #dc2626; color: #fff; }
+    .btn-green  { background: #16a34a; color: #fff; }
+    .btn-grey   { background: #374151; color: #e5e7eb; }
+
+    .spinner {
+      display: none;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading .spinner { display: inline-block; }
+
+    .price-row { display: flex; gap: 8px; align-items: center; }
+    .price-row input[type=number] {
+      width: 100px;
+      padding: 7px 10px;
+      background: #12141f;
+      border: 1px solid #2a2d3a;
+      border-radius: 7px;
+      color: #fff;
+      font-size: 0.85rem;
+    }
+    .price-row input[type=number]:focus { outline: none; border-color: #ea580c; }
+
+    /* tooltip */
+    .tooltip-wrap { position: relative; display: inline-block; }
+    .tooltip-wrap .tooltip-text {
+      visibility: hidden;
+      opacity: 0;
+      width: 220px;
+      background: #1a1d27;
+      border: 1px solid #2a2d3a;
+      color: #cbd5e1;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      padding: 8px 10px;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      transition: opacity 0.15s;
+      z-index: 100;
+      pointer-events: none;
+    }
+    .tooltip-wrap:hover .tooltip-text {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    /* ── Event log ── */
+    .log-section {
+      padding: 0 24px 24px;
+    }
+    .log-section h2 {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    #event-log {
+      background: #12141f;
+      border: 1px solid #2a2d3a;
+      border-radius: 8px;
+      padding: 10px 14px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.78rem;
+      line-height: 1.6;
+    }
+    .log-entry { padding: 2px 0; }
+    .log-entry .ts  { color: #4b5563; margin-right: 6px; }
+    .log-entry.memory .ev  { color: #818cf8; }
+    .log-entry.db    .ev  { color: #fb923c; }
+    .log-entry.signal .ev { color: #f87171; }
+    .log-entry.answer .ev { color: #34d399; }
+    .log-entry.info  .ev  { color: #94a3b8; }
+
+    /* ── Architecture banner ── */
+    .arch-banner {
+      background: #111827;
+      border-bottom: 1px solid #1f2937;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 0;
+      font-size: 0.78rem;
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+    .arch-label {
+      color: #6b7280;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-right: 12px;
+      white-space: nowrap;
+    }
+    .arch-node {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.75rem;
+      white-space: nowrap;
+    }
+    .arch-node.db    { background: #1c2433; border: 1px solid #374151; color: #fb923c; }
+    .arch-node.rdi   { background: #1c1c2e; border: 1px solid #4338ca; color: #818cf8; }
+    .arch-node.mem   { background: #1a2035; border: 1px solid #1d4ed8; color: #60a5fa; }
+    .arch-node.revok { background: #1a1f2e; border: 1px solid #0891b2; color: #22d3ee; }
+    .arch-node.agent { background: #14202e; border: 1px solid #15803d; color: #4ade80; }
+    .arch-arrow {
+      color: #374151;
+      font-size: 1rem;
+      margin: 0 4px;
+      font-weight: 300;
+    }
+    .arch-note {
+      margin-left: auto;
+      font-size: 0.7rem;
+      color: #4b5563;
+      font-style: italic;
+    }
+
+    /* ── Metrics chips ── */
+    .chips-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 10px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 9px;
+      border-radius: 99px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .chip-metric  { background: #1e2535; color: #94a3b8; border: 1px solid #2a3347; }
+    .chip-path    { background: #1c2433; color: #60a5fa; border: 1px solid #1d4ed8; }
+    .chip-fresh   { background: #14532d; color: #86efac; border: 1px solid #15803d; }
+    .chip-degraded{ background: #78350f; color: #fde68a; border: 1px solid #b45309; }
+    .chip-stale   { background: #7f1d1d; color: #fca5a5; border: 1px solid #dc2626; }
+    .chip-unknown { background: #1f2937; color: #9ca3af; border: 1px solid #374151; }
+    .chip-verified{ background: #14532d; color: #86efac; border: 1px solid #15803d; }
+    .chip-warning { background: #431407; color: #fdba74; border: 1px solid #c2410c; }
+
+    /* ── Scoreboard banner ── */
+    .scoreboard-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 8px 24px;
+      background: #13161f;
+      border-bottom: 1px solid #1f2937;
+      flex-wrap: wrap;
+      row-gap: 4px;
+    }
+    .score-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 20px;
+    }
+    .score-num {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #f59e0b;
+      min-width: 32px;
+      text-align: right;
+      transition: color 0.4s;
+    }
+    .score-num.updated { color: #fbbf24; }
+    .score-label {
+      font-size: 0.72rem;
+      color: #6b7280;
+      white-space: nowrap;
+    }
+    .score-sep { color: #2a2d3a; font-size: 1.2rem; }
+
+    /* ── Flash animation ── */
+    @keyframes flash-amber {
+      0%   { background: transparent; }
+      30%  { background: rgba(245,158,11,0.25); }
+      100% { background: transparent; }
+    }
+    .flash-amber { animation: flash-amber 0.8s ease-out; }
+
+    /* ── Packet animation (proxy write) ── */
+    @keyframes packet-travel {
+      0%   { transform: translateX(0); opacity: 1; }
+      100% { transform: translateX(200px); opacity: 0; }
+    }
+    .packet-dot {
+      position: absolute;
+      width: 8px; height: 8px;
+      background: #f59e0b;
+      border-radius: 50%;
+      top: 50%; margin-top: -4px;
+      animation: packet-travel 1s ease-in-out forwards;
+      pointer-events: none;
+    }
+    .arch-banner { position: relative; overflow: hidden; }
+
+    /* ── Health status ── */
+    .health-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.75rem;
+      color: #6b7280;
+    }
+    .svc-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.7rem;
+    }
+    .svc-dot .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+    .svc-dot .dot.ok  { background: #22c55e; }
+    .svc-dot .dot.err { background: #ef4444; }
+    .svc-dot .dot.cfg { background: #f59e0b; }
+    .svc-dot .dot.unk { background: #4b5563; }
+
+    /* ── Without-Revok architecture (side note) ── */
+    .arch-without {
+      background: #0f1117;
+      border-bottom: 1px solid #1f2937;
+      padding: 6px 24px;
+      font-size: 0.7rem;
+      color: #4b5563;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .arch-without .arch-node { opacity: 0.65; }
+
+    /* ── Scenario steps ── */
+    .scenario-steps {
+      display: flex;
+      flex-direction: row;
+      gap: 0;
+      margin-bottom: 20px;
+      align-items: stretch;
+    }
+    .scenario-step {
+      display: flex;
+      flex: 1;
+      min-width: 0;
+      gap: 12px;
+      padding: 0 20px 0 0;
+      margin-right: 20px;
+      border-right: 1px solid #1e2535;
+    }
+    .scenario-step:last-child { border-right: none; margin-right: 0; padding-right: 0; }
+    .step-number {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: #1e2535;
+      border: 1px solid #334155;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+    .step-body { flex: 1; }
+    .step-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 4px;
+    }
+    .step-desc {
+      font-size: 0.78rem;
+      color: #64748b;
+      line-height: 1.55;
+      margin-bottom: 10px;
+    }
+
+    /* ── Ask row ── */
+    .ask-row {
+      background: #12141f;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+    .ask-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 4px;
+    }
+    .ask-desc {
+      font-size: 0.78rem;
+      color: #64748b;
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+    .ask-input-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .ask-input-row input[type=text] {
+      flex: 1;
+      padding: 9px 14px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #f1f5f9;
+      font-size: 0.85rem;
+    }
+    .ask-input-row input[type=text]:focus {
+      outline: none;
+      border-color: #16a34a;
+    }
+    .ask-hint {
+      margin-top: 8px;
+      font-size: 0.72rem;
+      color: #4b5563;
+      font-style: italic;
+    }
+  </style>
+<body>
+
+<header>
+  <h1>⚡ Revok — Memory Invalidation &amp; Confidence Layer for AI Agents</h1>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <a href="/calculator" target="_blank" style="font-size:0.8rem;color:#f59e0b;text-decoration:none;font-weight:600;padding:5px 12px;border:1px solid #78350f;border-radius:6px;">💰 ROI Calculator</a>
+    <div id="health-bar" class="health-bar">
+      <span class="svc-dot"><span class="dot unk" id="hdot-sqlite"></span>DB</span>
+      <span class="svc-dot"><span class="dot unk" id="hdot-mem0"></span>Mem0</span>
+      <span class="svc-dot"><span class="dot unk" id="hdot-revok"></span>Revok</span>
+      <span class="svc-dot"><span class="dot unk" id="hdot-llm"></span>LLM</span>
+    </div>
+    <div>
+      <span id="conn-dot" class="conn-dot err"></span>
+      <span id="conn-label">Checking…</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── Session scoreboard ── -->
+<div id="scoreboard" class="scoreboard-banner">
+  <span class="score-item">
+    <span class="score-num" id="score-questions">0</span>
+    <span class="score-label">🧠 Questions asked</span>
+  </span>
+  <span class="score-sep">|</span>
+  <span class="score-item">
+    <span class="score-num" id="score-drift">0</span>
+    <span class="score-label">🛡 Drift caught by Revok</span>
+  </span>
+  <span class="score-sep">|</span>
+  <span class="score-item">
+    <span class="score-num" id="score-wrong">0</span>
+    <span class="score-label">❌ Wrong answers (naive)</span>
+  </span>
+  <span class="score-sep">|</span>
+  <span class="score-item">
+    <span class="score-num" id="score-cost">$0</span>
+    <span class="score-label">💰 Est. cost saved</span>
+  </span>
+</div>
+<div class="arch-banner">
+  <span class="arch-label">With Revok</span>
+  <span class="arch-node db">🗄 Any data source</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node rdi">⚡ Any write source</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node revok">🔍 Revok Proxy</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node mem">🧠 Agent Memory</span>
+  <span class="arch-arrow">→</span>
+  <span class="arch-node agent">🤖 Agent</span>
+  <span class="arch-note">Revok intercepts every memory write — from events, CDC, webhooks, or direct calls — scoring confidence so agents know when to trust what they remember</span>
+</div>
+<div class="arch-without">
+  <span class="arch-label" style="color:#ef4444;opacity:0.7;">Without Revok</span>
+  <span class="arch-node db">🗄 Any data source</span>
+  <span class="arch-arrow" style="color:#4b5563;">→</span>
+  <span class="arch-node rdi" style="opacity:0.55;">⚡ Any write source</span>
+  <span class="arch-arrow" style="color:#4b5563;">→</span>
+  <span class="arch-node mem" style="opacity:0.55;">🧠 Agent Memory (direct write)</span>
+  <span class="arch-arrow" style="color:#ef4444;font-size:0.85rem;">✗ no confidence layer</span>
+  <span class="arch-node agent" style="border-color:#374151;color:#9ca3af;">🤖 Agent (trusts memory blindly)</span>
+</div>
+
+<!-- ── Control Panel ── -->
+<section class="controls-section">
+  <h2>Demo Setup — run these steps in order to see the drift problem</h2>
+
+  <div class="scenario-steps">
+
+    <div class="scenario-step">
+      <div class="step-number">1</div>
+      <div class="step-body">
+        <div class="step-title">Train agents on current pricing</div>
+        <div class="step-desc">Stores the current database price ($500/mo) into each agent's long-term memory via Mem0. Both agents now "know" the price — but only one knows it through Revok, which starts tracking confidence.</div>
+        <button class="btn btn-blue" id="btn-load" onclick="doAction('load-memory', this)">
+          <span class="spinner"></span> Store price in agent memory
+        </button>
+      </div>
+    </div>
+
+    <div class="scenario-step">
+      <div class="step-number">2</div>
+      <div class="step-body">
+        <div class="step-title">Simulate a price change</div>
+        <div class="step-desc">Updates the operational database — as if the vendor raised prices. The agents' memories still say the old price. This is the moment drift begins.</div>
+        <div class="price-row">
+          <span style="font-size:0.82rem;color:#94a3b8;">New price: $</span>
+          <input type="number" id="new-price" value="750" min="1" step="50" />
+          <button class="btn btn-orange" id="btn-change" onclick="doChangePrice(this)">
+            <span class="spinner"></span> Update database price
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="scenario-step">
+      <div class="step-number">3</div>
+      <div class="step-body">
+        <div class="step-title">Propagate the change to agent memory</div>
+        <div class="step-desc">Writes the new price into agent memory — simulating a downstream event (webhook, CDC, pipeline). The <strong style="color:#4ade80;">with-Revok agent</strong> receives it through the Revok proxy, which scores confidence. The <strong style="color:#f87171;">without-Revok agent</strong> gets a direct write — no tracking, no decay.</div>
+        <button class="btn btn-red" id="btn-signal" onclick="doAction('trigger-signal', this)">
+          <span class="spinner"></span> Write updated price to agent memories
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Question input + Ask button -->
+  <div class="ask-row">
+    <div class="ask-label">Now ask both agents a question</div>
+    <div class="ask-desc">The without-Revok agent answers from memory blindly. The with-Revok agent checks confidence first — if it's stale, it re-verifies against the live database before answering.</div>
+    <div class="ask-input-row">
+      <input
+        type="text"
+        id="question-input"
+        placeholder="e.g. What does Redis Enterprise cost? Can we afford the enterprise tier?"
+        value="What is the current price for Redis Enterprise per month?"
+      />
+      <button class="btn btn-green" id="btn-ask" onclick="doAskAgent(this)">
+        <span class="spinner"></span> Ask both agents →
+      </button>
+    </div>
+    <div class="ask-hint">Try asking after step 1 (fresh memory) and again after step 3 (drifted memory) to see the difference.</div>
+  </div>
+
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e2535;">
+    <button class="btn btn-grey" id="btn-reset" onclick="doAction('reset', this)" style="font-size:0.78rem;padding:6px 14px;">
+      <span class="spinner"></span> Reset demo (clears all memories &amp; state)
+    </button>
+  </div>
+
+</section>
+
+<!-- ── 3-column grid ── -->
+<main>
+
+  <!-- LEFT: SQL Database -->
+  <div class="card">
+    <h2>🗄 Operational DB <span style="font-weight:400;color:#4b5563;font-size:0.7rem;text-transform:none;letter-spacing:0;">(source of truth)</span></h2>
+    <div class="kv">
+      <label>Product</label>
+      <span class="val" id="db-product">—</span>
+    </div>
+    <div class="kv">
+      <label>Current Price</label>
+      <span class="val" id="db-price">—</span>
+    </div>
+    <div class="kv">
+      <label>Last Updated</label>
+      <span class="val mono" id="db-updated">—</span>
+    </div>
+    <div class="kv">
+      <label>WITH REVOK — DB vs Memory</label>
+      <span id="align-badge" class="badge unknown">Unknown</span>
+    </div>
+  </div>
+
+  <!-- MIDDLE: Agent Belief -->
+  <div class="card">
+    <h2>🧠 WITH REVOK — Agent Belief <span style="font-weight:400;color:#4b5563;font-size:0.7rem;text-transform:none;letter-spacing:0;">(Agent Memory + Revok confidence layer)</span></h2>
+    <div class="kv">
+      <label>Memory Content</label>
+      <span class="val mono" id="memory-content" style="font-size:0.8rem; color:#a5b4fc;">—</span>
+    </div>
+
+    <div class="gauge-wrap">
+      <svg width="120" height="70" viewBox="0 0 120 70">
+        <!-- track -->
+        <path d="M10,65 A55,55 0 0,1 110,65"
+              fill="none" stroke="#2a2d3a" stroke-width="12" stroke-linecap="round"/>
+        <!-- fill -->
+        <path id="gauge-fill" d="M10,65 A55,55 0 0,1 110,65"
+              fill="none" stroke="#22c55e" stroke-width="12" stroke-linecap="round"
+              stroke-dasharray="172.8" stroke-dashoffset="172.8"/>
+      </svg>
+      <div id="gauge-label">—</div>
+      <div id="gauge-status" style="color:#888;">unknown</div>
+    </div>
+
+    <div class="kv">
+      <label>Signal Count</label>
+      <span class="val" id="signal-count">0</span>
+    </div>
+    <div class="kv">
+      <label>Last Signal</label>
+      <span class="val mono" id="last-signal" style="font-size:0.8rem;">—</span>
+    </div>
+  </div>
+
+  <!-- RIGHT: Sales Agent Responses -->
+  <div class="card">
+    <h2>🤖 Sales Agent Response</h2>
+
+    <div class="agent-card with-revok">
+      <h3>With Revok — context-aware agent</h3>
+      <p style="font-size:0.72rem;color:#4ade80;margin-bottom:8px;font-style:italic;">Memory written through Revok proxy · Confidence &amp; invalidation tracked · Re-verifies when stale</p>
+      <p id="ans-with">Ask the agent to see an answer.</p>
+      <div class="memory-quote" id="quote-with"></div>
+      <div id="banner-with" class="agent-banner" style="display:none;"></div>
+      <div class="chips-row" id="chips-with"></div>
+    </div>
+
+    <div class="agent-card no-revok">
+      <h3>Without Revok — plain Mem0 agent</h3>
+      <p style="font-size:0.72rem;color:#f87171;margin-bottom:8px;font-style:italic;">Memory written directly · <strong style="color:#ef4444;">Revok bypassed</strong> · No confidence tracking · Trusts stored memory blindly</p>
+      <p id="ans-without">Ask the agent to see an answer.</p>
+      <div class="memory-quote" id="quote-without"></div>
+      <div class="chips-row" id="chips-without"></div>
+    </div>
+  </div>
+
+</main>
+
+
+<!-- ── Event Log ── -->
+<section class="log-section">
+  <h2>Event Log</h2>
+  <div id="event-log"><div class="log-entry info"><span class="ts">—</span><span class="ev">Waiting for events…</span></div></div>
+</section>
+
+<!-- ── Inline Memories ── -->
+<section class="log-section" style="padding-top:0;">
+  <h2>&#129504; Agent Memory Contents <span id="mem-refresh-ts" style="font-weight:400;text-transform:none;letter-spacing:0;color:#4b5563;font-size:0.7rem;"></span></h2>
+  <div style="font-size:0.7rem;color:#4b5563;margin-bottom:8px;">
+    These are <strong style="color:#94a3b8;">Mem0's LLM-rewritten summaries</strong> of what each agent has stored — Mem0 deduplicates and rewrites facts on every write, so the text may differ from what was sent.
+    Each line is one stored entry. Multiple entries appear if Mem0 decided to keep them separately.
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div>
+      <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:#4ade80;margin-bottom:6px;">With Revok <span id="mem-with-count" style="font-weight:400;text-transform:none;"></span></div>
+      <div id="mem-with-inline" style="font-size:.8rem;font-family:monospace;color:#cbd5e1;background:#12141f;border:1px solid #2a2d3a;border-radius:6px;padding:10px;min-height:48px;white-space:pre-wrap;">(not loaded)</div>
+    </div>
+    <div>
+      <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:#f87171;margin-bottom:6px;">Without Revok <span id="mem-without-count" style="font-weight:400;text-transform:none;"></span></div>
+      <div id="mem-without-inline" style="font-size:.8rem;font-family:monospace;color:#cbd5e1;background:#12141f;border:1px solid #2a2d3a;border-radius:6px;padding:10px;min-height:48px;white-space:pre-wrap;">(not loaded)</div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const POLL_MS = 2000;
+  let _lastState = {};
+  let _prevEventLog = [];
+  let _streaming = false; // true while SSE ask-agent is in flight
+
+  // ── Gauge helpers ──
+  const TRACK_LEN = 172.8;
+  function setGauge(score, status) {
+    const fill = document.getElementById('gauge-fill');
+    const label = document.getElementById('gauge-label');
+    const statusEl = document.getElementById('gauge-status');
+    const pct = (score != null) ? Math.max(0, Math.min(1, score)) : 0;
+    const offset = TRACK_LEN * (1 - pct);
+    fill.style.strokeDashoffset = offset;
+    const colors = { fresh: '#22c55e', degraded: '#f59e0b', stale: '#ef4444', unknown: '#4b5563' };
+    const color = colors[status] || colors.unknown;
+    fill.style.stroke = color;
+    label.style.color = color;
+    label.textContent = (score != null) ? score.toFixed(2) : '—';
+    statusEl.textContent = status || 'unknown';
+    statusEl.style.color = color;
+  }
+
+  // ── Flash element amber ──
+  function flashEl(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('flash-amber');
+    void el.offsetWidth; // force reflow
+    el.classList.add('flash-amber');
+    setTimeout(() => el.classList.remove('flash-amber'), 900);
+  }
+
+  // ── Animated packet across arch banner ──
+  function animatePacket() {
+    const banner = document.querySelector('.arch-banner');
+    if (!banner) return;
+    const dot = document.createElement('div');
+    dot.className = 'packet-dot';
+    banner.appendChild(dot);
+    setTimeout(() => dot.remove(), 1100);
+  }
+
+  // ── Scoreboard count-up ──
+  function animateCount(elId, newVal) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.classList.remove('updated');
+    void el.offsetWidth;
+    el.classList.add('updated');
+    setTimeout(() => el.classList.remove('updated'), 600);
+    el.textContent = newVal;
+  }
+
+  function updateScoreboard(stats) {
+    if (!stats) return;
+    animateCount('score-questions', stats.questions || 0);
+    animateCount('score-drift',     stats.drift_caught || 0);
+    animateCount('score-wrong',     stats.wrong_answers || 0);
+    animateCount('score-cost',      '$' + (stats.cost_saved || 0).toLocaleString());
+  }
+
+  // ── Health polling ──
+  async function pollHealth() {
+    try {
+      const r = await fetch('/health');
+      if (!r.ok) return;
+      const d = await r.json();
+      const svc = d.services || {};
+      function setDot(id, val) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.className = 'dot ' + (val === 'ok' ? 'ok' : val === 'configured' ? 'cfg' : val === 'error' ? 'err' : 'unk');
+      }
+      setDot('hdot-sqlite', svc.sqlite);
+      setDot('hdot-mem0',   svc.mem0);
+      setDot('hdot-revok',  svc.revok);
+      setDot('hdot-llm',    svc.llm);
+    } catch (_) {}
+  }
+  setInterval(pollHealth, 8000);
+  pollHealth();
+
+  // ── Metrics chips renderer ──
+  function renderChips(data) {
+    const isWithRevok = data.agent === 'with_revok';
+    const chipsEl = document.getElementById(isWithRevok ? 'chips-with' : 'chips-without');
+    if (!chipsEl) return;
+    const chips = [];
+    if (data.latency_ms != null)  chips.push({ cls: 'chip-metric', text: `⏱ ${data.latency_ms}ms` });
+    if (data.llm_tokens != null)  chips.push({ cls: 'chip-metric', text: `🔢 ${data.llm_tokens} tokens` });
+    if (data.path)                chips.push({ cls: 'chip-path',   text: `🛤 ${data.path.replace('\u2192', ' \u2192 ')}` });
+    if (isWithRevok) {
+      const s = data.confidence_status || 'unknown';
+      const clsMap = { fresh: 'chip-fresh', degraded: 'chip-degraded', stale: 'chip-stale', unknown: 'chip-unknown' };
+      const scoreStr = data.confidence_score != null ? ': ' + data.confidence_score.toFixed(2) : '';
+      chips.push({ cls: clsMap[s] || 'chip-unknown', text: `🎯 ${s}${scoreStr}` });
+      if (data.re_verified) chips.push({ cls: 'chip-verified', text: '✅ verified against DB' });
+    } else {
+      chips.push({ cls: 'chip-warning', text: '⚠️ no confidence layer' });
+    }
+    chipsEl.innerHTML = chips.map(c => `<span class="chip ${c.cls}">${c.text}</span>`).join('');
+  }
+
+  // ── Render state ──
+  function renderState(s) {
+    document.getElementById('db-product').textContent = s.product_name || '—';
+    const priceStr = (s.db_price != null) ? `$${Number(s.db_price).toLocaleString()}/month` : '—';
+    document.getElementById('db-price').textContent = priceStr;
+    document.getElementById('db-updated').textContent = s.db_updated_at
+      ? new Date(s.db_updated_at).toLocaleString() : '—';
+
+    const badge = document.getElementById('align-badge');
+    let memPrice = null;
+    if (s.memory_content) {
+      const m = s.memory_content.match(/\$(\d[\d,]*)/);
+      if (m) memPrice = parseFloat(m[1].replace(',', ''));
+    }
+    if (s.db_price != null && memPrice != null) {
+      const match = Math.abs(s.db_price - memPrice) < 0.5;
+      badge.textContent = match ? '✓ Matches Memory' : '⚠ Differs from Memory';
+      badge.className = 'badge ' + (match ? 'match' : 'differ');
+    } else {
+      badge.textContent = 'No memory yet';
+      badge.className = 'badge unknown';
+    }
+
+    document.getElementById('memory-content').textContent = s.memory_content || '—';
+    setGauge(s.confidence_score, s.confidence_status);
+    document.getElementById('signal-count').textContent = s.signal_count ?? 0;
+    document.getElementById('last-signal').textContent = s.last_signal_at
+      ? new Date(s.last_signal_at).toLocaleString() : '—';
+
+    if (s.answer_without_revok && !_streaming) {
+      const a = s.answer_without_revok;
+      document.getElementById('ans-without').textContent = a.answer || '—';
+      document.getElementById('quote-without').textContent = a.memory_quote ? `Memory: "${a.memory_quote}"` : '';
+    }
+    if (s.answer_with_revok && !_streaming) {
+      const a = s.answer_with_revok;
+      document.getElementById('ans-with').textContent = a.answer || '—';
+      document.getElementById('quote-with').textContent = a.memory_quote ? `Memory: "${a.memory_quote}"` : '';
+      const banner = document.getElementById('banner-with');
+      const status = a.confidence_status || 'unknown';
+      if (a.re_verified) {
+        banner.className = 'agent-banner verified';
+        banner.textContent = '✓ Re-verified against live database';
+        banner.style.display = '';
+      } else if (['degraded', 'stale', 'fresh'].includes(status)) {
+        banner.className = 'agent-banner ' + status;
+        const labels = { fresh: '✓ Confidence fresh — memory trusted', degraded: '⚠ Confidence degraded — treat with caution', stale: '✗ Confidence stale — should re-verify' };
+        banner.textContent = labels[status] || status;
+        banner.style.display = '';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    const dot = document.getElementById('conn-dot');
+    const lbl = document.getElementById('conn-label');
+    if (s.revok_reachable) {
+      dot.className = 'conn-dot ok';
+      lbl.textContent = 'Revok connected';
+    } else {
+      dot.className = 'conn-dot err';
+      lbl.textContent = 'Revok unreachable';
+    }
+
+    const log = document.getElementById('event-log');
+    const entries = s.event_log || [];
+    if (entries.length > 0 && JSON.stringify(entries) !== JSON.stringify(_prevEventLog)) {
+      _prevEventLog = JSON.parse(JSON.stringify(entries));
+      log.innerHTML = [...entries].reverse().map(e => {
+        const ts = e.ts ? new Date(e.ts).toLocaleTimeString() : '';
+        return `<div class="log-entry ${e.kind || 'info'}"><span class="ts">${ts}</span><span class="ev">${e.msg || e.message || ''}</span></div>`;
+      }).join('');
+    }
+
+    // Session scoreboard
+    updateScoreboard(s.session_stats);
+  }
+
+  // ── Poll ──
+  async function poll() {
+    try {
+      const r = await fetch('/state');
+      if (r.ok) { const s = await r.json(); renderState(s); _lastState = s; }
+    } catch (_) {}
+    setTimeout(poll, POLL_MS);
+  }
+
+  // ── Actions ──
+  async function doAction(action, btn) {
+    btn.classList.add('loading');
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/actions/${action}`, { method: 'POST' });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        alert(`Error: ${body.error || r.statusText}`);
+      }
+      // Animate packet on external write
+      if (action === 'trigger-signal') animatePacket();
+      // Force immediate screen refresh so changes are visible without waiting for poll
+      try {
+        const s = await (await fetch('/state')).json();
+        renderState(s);
+        _lastState = s;
+      } catch (_) {}
+      await refreshMemories();
+    } catch (e) {
+      alert(`Request failed: ${e}`);
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  }
+
+  async function doChangePrice(btn) {
+    const price = parseFloat(document.getElementById('new-price').value);
+    if (isNaN(price) || price <= 0) { alert('Enter a valid price.'); return; }
+    btn.classList.add('loading');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/actions/change-price', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_price: price }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        alert(`Error: ${body.error || r.statusText}`);
+      } else {
+        flashEl('db-price');
+        try {
+          const s = await (await fetch('/state')).json();
+          renderState(s);
+          _lastState = s;
+        } catch (_) {}
+      }
+    } catch (e) {
+      alert(`Request failed: ${e}`);
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  }
+
+  // ── Inline memories auto-refresh ──
+  async function refreshMemories() {
+    try {
+      const r = await fetch('/memories');
+      if (!r.ok) return;
+      const d = await r.json();
+      const fmt = (arr, countEl) => {
+        if (!arr || arr.length === 0) {
+          if (countEl) countEl.textContent = '(0 entries)';
+          return '(no memories stored)';
+        }
+        if (countEl) countEl.textContent = `(${arr.length} entr${arr.length === 1 ? 'y' : 'ies'})`;
+        return arr.map((m, i) => {
+          const ts = m.updated_at || m.created_at || '';
+          const tsLabel = ts ? ' [' + ts.replace('T',' ').replace(/\..*$/,'') + ' UTC]' : '';
+          return `[${i+1}]${tsLabel}\n${m.memory}`;
+        }).join('\n\n');
+      };
+      document.getElementById('mem-with-inline').textContent    = fmt(d.with_revok,    document.getElementById('mem-with-count'));
+      document.getElementById('mem-without-inline').textContent = fmt(d.without_revok, document.getElementById('mem-without-count'));
+      document.getElementById('mem-refresh-ts').textContent = '\u2014 ' + new Date().toLocaleTimeString();
+    } catch (_) {}
+  }
+  setInterval(refreshMemories, 5000);
+  refreshMemories();
+
+  // ── Update Revok answer banner ──
+  function updateRevokBanner(status, reVerified) {
+    const banner = document.getElementById('banner-with');
+    if (reVerified) {
+      banner.className = 'agent-banner verified';
+      banner.textContent = '\u2713 Re-verified against live database';
+      banner.style.display = '';
+    } else if (['degraded', 'stale', 'fresh'].includes(status)) {
+      const labels = { fresh: '\u2713 Confidence fresh \u2014 memory trusted', degraded: '\u26a0 Confidence degraded \u2014 treat with caution', stale: '\u2717 Confidence stale \u2014 should re-verify' };
+      banner.className = 'agent-banner ' + status;
+      banner.textContent = labels[status] || status;
+      banner.style.display = '';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+
+  // ── Ask Agent (concurrent streaming SSE) ──
+  async function doAskAgent(btn) {
+    const questionInput = document.getElementById('question-input');
+    const question = (questionInput && questionInput.value.trim()) ||
+      'What is the current price for Redis Enterprise per month?';
+
+    btn.classList.add('loading');
+    btn.disabled = true;
+    _streaming = true;
+
+    const elWithout = document.getElementById('ans-without');
+    const elWith    = document.getElementById('ans-with');
+    elWithout.textContent = '\u23f3 Loading memory\u2026';
+    elWith.textContent    = '\u23f3 Loading memory\u2026';
+    document.getElementById('banner-with').style.display = 'none';
+    document.getElementById('chips-with').innerHTML    = '';
+    document.getElementById('chips-without').innerHTML = '';
+    document.getElementById('quote-with').textContent    = '';
+    document.getElementById('quote-without').textContent = '';
+
+    // Track whether we've started streaming tokens for each agent
+    let withoutTokenStarted = false;
+    let withTokenStarted    = false;
+
+    try {
+      const resp = await fetch('/stream/ask-agent?q=' + encodeURIComponent(question));
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const part of parts) {
+          const line = part.split('\n').find(l => l.startsWith('data: '));
+          if (!line) continue;
+          let data;
+          try { data = JSON.parse(line.slice(6)); } catch (_) { continue; }
+
+          switch (data.type) {
+            case 'agent_started':
+              break; // already showing "Loading memory…"
+
+            case 'memory_loaded': {
+              const el = data.agent === 'without_revok' ? elWithout : elWith;
+              const mc = data.memory_count || 0;
+              if (data.agent === 'without_revok') {
+                el.textContent = `\u23f3 Memory loaded (${mc} entr${mc === 1 ? 'y' : 'ies'}) \u2014 calling LLM\u2026`;
+              } else {
+                el.textContent = `\u23f3 Memory loaded \u2014 checking confidence\u2026`;
+              }
+              break;
+            }
+
+            case 'confidence_checked': {
+              elWith.textContent = `\u23f3 Confidence: ${data.status} (${data.score != null ? data.score.toFixed(2) : 'N/A'}) \u2014 calling LLM\u2026`;
+              setGauge(data.score, data.status);
+              break;
+            }
+
+            case 'db_reverified': {
+              elWith.textContent = `\u23f3 Stale memory detected \u2014 re-verified: $${data.live_price}/month \u2014 calling LLM\u2026`;
+              flashEl('db-price');
+              animatePacket();
+              break;
+            }
+
+            case 'token': {
+              const el = data.agent === 'without_revok' ? elWithout : elWith;
+              // Clear the "thinking…" placeholder on first real token
+              if (data.agent === 'without_revok' && !withoutTokenStarted) {
+                el.textContent = '';
+                withoutTokenStarted = true;
+              } else if (data.agent === 'with_revok' && !withTokenStarted) {
+                el.textContent = '';
+                withTokenStarted = true;
+              }
+              el.textContent += data.text;
+              break;
+            }
+
+            case 'agent_finished': {
+              renderChips(data);
+              if (data.agent === 'with_revok') {
+                document.getElementById('quote-with').textContent =
+                  data.memory_quote ? `Memory: "${data.memory_quote}"` : '';
+                updateRevokBanner(data.confidence_status, data.re_verified);
+              } else {
+                document.getElementById('quote-without').textContent =
+                  data.memory_quote ? `Memory: "${data.memory_quote}"` : '';
+              }
+              break;
+            }
+
+            case 'error': {
+              const el = data.agent === 'without_revok' ? elWithout : elWith;
+              el.textContent = '\u274c Error: ' + data.message;
+              break;
+            }
+          }
+        }
+      }
+      refreshMemories();
+    } catch (e) {
+      alert('Stream error: ' + e);
+    } finally {
+      _streaming = false;
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  }
+
+  poll();
+</script>
+</body>
+</html>

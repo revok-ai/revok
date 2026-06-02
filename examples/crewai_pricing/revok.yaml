@@ -1,0 +1,36 @@
+server:
+  host: "0.0.0.0"
+  port: 7771
+  startup_timeout_seconds: 10
+  max_signal_size_bytes: 1048576
+
+upstream:
+  mem0_url: "http://mem0:8000"
+  write_methods:
+    - "POST"
+    - "PUT"
+    - "PATCH"
+  write_paths:
+    - "/memories"
+
+entity_matcher:
+  patterns:
+    - name: "redis_enterprise"
+      # Matches any text containing "Redis Enterprise" (e.g. budget approvals,
+      # pricing signals sent by the simulated Azure Function)
+      regex: "\\bRedis Enterprise\\b"
+
+scoring:
+  # half_life_seconds: time for confidence to decay to 0.5 after a signal
+  # 43200 = 12 hours  |  600 = 10 min for demos  |  120 = 2 min  |  30 = very fast
+  half_life_seconds: 600
+  signal_strength: 0.8
+  score_cap: 1.0
+
+state_store:
+  sqlite_path: "/data/revok_crewai_demo.db"
+  hot_layer_max_entries: 1000
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(name)s %(levelname)s %(message)s"
