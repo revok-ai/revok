@@ -323,6 +323,65 @@ async def test_list_entities_returns_paginated_results(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# DELETE /v1/entities/{entity_key}
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_entity_returns_200_and_removes_record(tmp_path: Path) -> None:
+    """DELETE /v1/entities/{entity_key} returns 200 and the record is gone."""
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                # Create entity via a write
+                await client.post("/v1/memories", json={"content": "Alice arrived"})
+                assert (await client.get("/v1/entities/alice")).status == 200
+
+                # Delete it
+                resp = await client.delete("/v1/entities/alice")
+                assert resp.status == 200
+                body = await resp.json()
+                assert body["deleted"] == "alice"
+
+                # Should now be gone
+                assert (await client.get("/v1/entities/alice")).status == 404
+        finally:
+            await store.close()
+
+
+async def test_delete_entity_returns_404_when_not_found(tmp_path: Path) -> None:
+    """DELETE /v1/entities/{entity_key} returns 404 when the key does not exist."""
+    config = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.delete("/v1/entities/nobody")
+            assert resp.status == 404
+            body = await resp.json()
+            assert body["error"] == "not_found"
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
 # T038: 413 when payload exceeds max_signal_size_bytes
 # ---------------------------------------------------------------------------
 
