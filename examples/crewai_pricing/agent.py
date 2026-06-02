@@ -254,10 +254,10 @@ class PricingSalesAgent:
                 signal_count=0,
             )
 
-        # WITH REVOK: degraded/stale → re-verify from DB first, then ask LLM
+        # WITH REVOK: only stale → re-verify from DB; degraded answers from memory with caveat
         live_price: float | None = None
         re_verified = False
-        if status in ("degraded", "stale"):
+        if status == "stale":
             row = await self.get_current_price_tool(product_name)
             if row:
                 live_price = float(row[db_module.COL_PRICE])
@@ -368,7 +368,7 @@ class PricingSalesAgent:
         re_verified = False
         path = "memory"
 
-        if self.use_revok and status in ("degraded", "stale"):
+        if self.use_revok and status == "stale":
             row = await self.get_current_price_tool(product_name)
             if row:
                 live_price = float(row[db_module.COL_PRICE])
@@ -380,6 +380,8 @@ class PricingSalesAgent:
                     "live_price": live_price,
                     "reason": status,
                 }
+        elif self.use_revok and status == "degraded":
+            path = "memory (caveat)"
 
         full_text: list[str] = []
         token_count = 0
@@ -442,9 +444,10 @@ class PricingSalesAgent:
         """
         if use_revok:
             if live_price is not None:
+                # Stale path: memory was stale, re-verified from live DB
                 system = (
                     "You are a confidence-aware sales agent. Your memory layer tracks "
-                    "how fresh your stored knowledge is. When memory confidence is low, "
+                    "how fresh your stored knowledge is. When memory confidence is too low, "
                     "you always re-verify from the live database before answering. "
                     "Be concise (2-3 sentences). Mention that you re-verified and use "
                     "the live price in your answer."
@@ -457,19 +460,36 @@ class PricingSalesAgent:
                     f"You re-verified via the live database: current price is ${live_price:.0f}/month.\n"
                     f"Answer the customer's question using the re-verified price."
                 )
-            else:
+            elif status == "degraded":
+                # Degraded path: answer from memory but add explicit caveat
+                score_str = f"{score:.2f}" if score is not None else "N/A"
                 system = (
                     "You are a confidence-aware sales agent. Your memory layer tracks "
-                    "how fresh your stored knowledge is. Answer from memory when confidence "
-                    "is high. Be concise (2-3 sentences). Mention the confidence status."
+                    "how fresh your stored knowledge is. When confidence is degraded, "
+                    "answer from memory but explicitly tell the customer the information "
+                    "may need verification before acting on it. Be concise (2-3 sentences)."
                 )
-                score_str = f"{score:.2f}" if score is not None else "N/A"
                 user = (
                     f"The customer is asking about {product_name}.\n"
                     f"Customer question: \"{question}\"\n"
                     f"Your stored memory: \"{memory_quote}\"\n"
-                    f"Memory confidence: {status} (score={score_str}, signals={signal_count})\n"
-                    f"Answer the customer's question from memory."
+                    f"Memory confidence: degraded (score={score_str}, signals={signal_count})\n"
+                    f"Answer from memory but include a caveat that this information may need verification."
+                )
+            else:
+                # Fresh path: answer confidently from memory
+                score_str = f"{score:.2f}" if score is not None else "N/A"
+                system = (
+                    "You are a confidence-aware sales agent. Your memory layer tracks "
+                    "how fresh your stored knowledge is. Confidence is high — answer "
+                    "confidently from memory. Be concise (2-3 sentences)."
+                )
+                user = (
+                    f"The customer is asking about {product_name}.\n"
+                    f"Customer question: \"{question}\"\n"
+                    f"Your stored memory: \"{memory_quote}\"\n"
+                    f"Memory confidence: fresh (score={score_str}, signals={signal_count})\n"
+                    f"Answer the customer's question confidently from memory."
                 )
         else:
             system = (
@@ -549,8 +569,13 @@ class PricingSalesAgent:
             price_str = self._extract_price(memory_quote) or "an approved amount"
             if live_price is not None:
                 return (
-                    f"[LLM unavailable] Memory said {price_str} but confidence was {status}. "
+                    f"[LLM unavailable] Memory said {price_str} but confidence was stale. "
                     f"Re-verified: current price is ${live_price:.0f}/month."
+                )
+            if status == "degraded":
+                return (
+                    f"[LLM unavailable] Based on memory: {product_name} is approved at {price_str}. "
+                    "(Note: confidence is degraded — this information may need verification.)"
                 )
             return f"[LLM unavailable] Based on memory: {product_name} is approved at {price_str}."
 
@@ -633,8 +658,13 @@ class PricingSalesAgent:
             price_str = self._extract_price(memory_quote) or "an approved amount"
             if live_price is not None:
                 fallback = (
-                    f"[LLM unavailable] Memory said {price_str} but confidence was {status}. "
+                    f"[LLM unavailable] Memory said {price_str} but confidence was stale. "
                     f"Re-verified: current price is ${live_price:.0f}/month."
+                )
+            elif status == "degraded":
+                fallback = (
+                    f"[LLM unavailable] Based on memory: {product_name} is approved at {price_str}. "
+                    "(Note: confidence is degraded — this information may need verification.)"
                 )
             else:
                 fallback = (
@@ -837,7 +867,7 @@ def _score_to_status(score: float | None) -> str:
         One of ``"fresh"``, ``"degraded"``, ``"stale"``, or ``"unknown"``.
     """
     if score is None:
-        return "unknown"
+        return "fresh"  # no CDC signals yet — memory is fully trusted
     if score > 0.7:
         return "fresh"
     if score >= 0.3:

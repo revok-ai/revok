@@ -156,6 +156,12 @@ async def get_memories(user_id: str | None = None, agent_id: str | None = None) 
     return m.get_all(filters=filters) if filters else m.get_all()
 
 
+@app.delete("/memories/{memory_id}")
+async def delete_memory(memory_id: str) -> Any:
+    get_memory().delete(memory_id)
+    return {"deleted": memory_id}
+
+
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}

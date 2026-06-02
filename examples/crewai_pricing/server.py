@@ -153,9 +153,23 @@ async def get_state() -> JSONResponse:
     entity = await _fetch_revok_entity()
     reachable = await _revok_reachable()
 
-    score: float | None = float(entity["score"]) if entity else None
-    sig_count: int = int(entity["signal_count"]) if entity else _demo_state.get("signal_count", 0)
-    conf_status: str = _score_to_status(score)
+    score: float | None
+    sig_count: int
+    conf_status: str
+
+    if entity is not None:
+        score = float(entity["score"])
+        sig_count = int(entity["signal_count"])
+        conf_status = _score_to_status(score)
+    elif _demo_state.get("memory_content"):
+        # Memory loaded but no CDC signal yet — entity is fresh by default
+        score = 1.0
+        sig_count = 0
+        conf_status = "fresh"
+    else:
+        score = None
+        sig_count = _demo_state.get("signal_count", 0)
+        conf_status = _score_to_status(score)
 
     if db_row:
         _demo_state["db_price"] = db_row[db_module.COL_PRICE]
@@ -174,6 +188,25 @@ async def get_state() -> JSONResponse:
     )
 
 
+async def _store_directly_to_mem0(
+    session: aiohttp.ClientSession,
+    mem0_url: str,
+    user_id: str,
+    content: str,
+) -> None:
+    """Write a memory entry directly to Mem0, bypassing the Revok proxy."""
+    payload = {
+        "messages": [{"role": "user", "content": content}],
+        "user_id": user_id,
+    }
+    async with session.post(
+        f"{mem0_url}/memories",
+        json=payload,
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as resp:
+        resp.raise_for_status()
+
+
 # ---------------------------------------------------------------------------
 # Action request models
 # ---------------------------------------------------------------------------
@@ -190,7 +223,13 @@ class ChangePriceRequest(BaseModel):
 
 @app.post("/actions/load-memory")
 async def load_memory() -> JSONResponse:
-    """Agent reads current price from SQLite and stores it as long-term memory in Mem0."""
+    """Agent reads current price from SQLite and stores it as long-term memory in Mem0.
+
+    Both agents write directly to Mem0, bypassing the Revok proxy, so the entity
+    record in Revok does not exist yet (score=None → displayed as FRESH).
+    Only the CDC ``trigger-signal`` step writes through Revok, which is what
+    degrades confidence and triggers re-verification.
+    """
     if _without_revok is None or _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
@@ -204,16 +243,20 @@ async def load_memory() -> JSONResponse:
     price = float(db_row[db_module.COL_PRICE])
     product = str(db_row[db_module.COL_NAME])
 
-    async with aiohttp.ClientSession() as session:
-        await asyncio.gather(
-            _without_revok.store_pricing_belief(session, product, price),
-            _with_revok.store_pricing_belief(session, product, price),
-        )
-
     content = (
         f"Customer budget approved {product} at ${price:.0f}/month. "
         "Verified pricing from database."
     )
+
+    mem0_url = os.getenv("MEM0_URL", "http://localhost:7770")
+    async with aiohttp.ClientSession() as session:
+        # Write both agents directly to Mem0 — NOT through the Revok proxy.
+        # This keeps the Revok entity at score=None (fresh) until a CDC signal fires.
+        await asyncio.gather(
+            _store_directly_to_mem0(session, mem0_url, _without_revok.user_id, content),
+            _store_directly_to_mem0(session, mem0_url, _with_revok.user_id, content),
+        )
+
     _demo_state["memory_content"] = content
     state_module.add_event(
         _demo_state,
@@ -249,61 +292,47 @@ async def change_price(body: ChangePriceRequest) -> JSONResponse:
 
 @app.post("/actions/trigger-signal")
 async def trigger_signal() -> JSONResponse:
-    """Simulate an Azure Function CDC event: the Function detects a DB price change
-    and writes the new price into the WITH-Revok agent's memory via the Revok proxy.
+    """Simulate a CDC event: an external system signals that pricing data changed.
 
-    This is the correct CDC model:
-      DB change → Azure Function → POST to Revok proxy (agent user_id) → Mem0 updated
+    Sends a notification through the Revok proxy for the WITH-Revok agent only.
+    Revok intercepts the write, matches the entity pattern, and degrades
+    confidence.  The pricing memory ($500) is intentionally NOT overwritten —
+    the agent must re-verify from the live database to discover the new price.
 
-    The WITHOUT-Revok agent's memory is NOT updated (it has no CDC integration).
+    The WITHOUT-Revok agent receives no CDC event; its memory stays stale.
     """
     if _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
     product = db_module.PRODUCT_NAME
-    db_row = await db_module.get_price(product)
-    if not db_row:
-        return JSONResponse({"error": f"Product {product!r} not found"}, status_code=404)
-
-    new_price = float(db_row[db_module.COL_PRICE])
-    price_str = f"${new_price:.0f}/month"
+    # CDC notification: mentions the entity (triggers Revok pattern match) but
+    # deliberately omits the new price so the agent's pricing memory stays at $500.
+    cdc_content = (
+        f"External system notification: pricing record updated for {product}. "
+        "Agent memory may be stale — re-verify before quoting."
+    )
 
     entity: dict[str, Any] | None = None
     try:
-        mem0_url = os.getenv("MEM0_URL", "http://localhost:7770")
+        revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
         async with aiohttp.ClientSession() as session:
-            # Delete WITH-Revok memories directly via Mem0 (not through Revok proxy)
-            # to avoid proxy latency during cleanup.  Qdrant deletions are eventually
-            # consistent, so we sleep 3 s to let the index settle before writing.
-            memories = await _with_revok._list_memories(session)
-            for item in memories:
-                mem_id = item.get("id")
-                if not mem_id:
-                    continue
-                try:
-                    async with session.delete(
-                        f"{mem0_url}/memories/{mem_id}",
-                        timeout=aiohttp.ClientTimeout(total=10),
-                    ) as dresp:
-                        _log.debug("Deleted memory %s → %s", mem_id, dresp.status)
-                except Exception as de:
-                    _log.warning("Could not delete memory %s: %s", mem_id, de)
+            # Send CDC notification through Revok proxy (WITH-Revok's user_id only).
+            # Revok will intercept this, match the entity, and record a degrading signal.
+            async with session.post(
+                f"{revok_url}/memories",
+                json={
+                    "messages": [{"role": "user", "content": cdc_content}],
+                    "user_id": _with_revok.user_id,
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                _log.info("CDC signal sent through Revok proxy: status=%s", resp.status)
 
-            # Wait for Qdrant to settle so Mem0's LLM sees an empty index
-            # and doesn't merge the new price with the old one.
-            await asyncio.sleep(3)
+            # Brief pause for Revok to commit the entity score update.
+            await asyncio.sleep(0.5)
 
-            # CDC write: push new price into WITH-Revok agent's memory through Revok
-            # proxy — this is what triggers the entity score update in Revok.
-            await _with_revok.store_pricing_belief(session, product, new_price)
-
-            # Brief pause so Mem0 commits the new memory to Qdrant before any
-            # subsequent GET /memories call reads it back.
-            await asyncio.sleep(1)
-
-            # Query updated entity score
+            # Query the updated entity record.
             encoded = urllib.parse.quote(_entity_key, safe="")
-            revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
             async with session.get(
                 f"{revok_url}/v1/entities/{encoded}",
                 timeout=aiohttp.ClientTimeout(total=5),
@@ -323,18 +352,12 @@ async def trigger_signal() -> JSONResponse:
     _demo_state["confidence_score"] = score
     _demo_state["confidence_status"] = conf_status
     _demo_state["signal_count"] = sig_count
-
-    # Keep memory_content in sync so the alignment badge in the UI reflects
-    # the WITH-Revok agent's latest belief (written by the CDC trigger).
-    _demo_state["memory_content"] = (
-        f"Customer budget approved {product} at ${new_price:.0f}/month. "
-        "Verified pricing from database."
-    )
+    # memory_content intentionally NOT updated — it still shows the stale $500 belief.
 
     score_str = f"{score:.2f}" if score is not None else "N/A"
     state_module.add_event(
         _demo_state,
-        f"External write — WITH-Revok memory updated to {price_str}, confidence now {conf_status} (score={score_str})",
+        f"CDC signal fired — {product} pricing data changed, confidence now {conf_status} (score={score_str})",
         kind="signal",
     )
     state_module.save(_demo_state)
@@ -614,16 +637,28 @@ async def stream_ask_agent(
 
 @app.post("/actions/reset")
 async def reset_demo() -> JSONResponse:
-    """Clear Mem0 memories, reset SQLite price to seed, clear event log."""
+    """Clear Mem0 memories, reset SQLite price to seed, clear Revok entity state, clear event log."""
     global _demo_state
     if _without_revok is None or _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
+    revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
+    encoded = urllib.parse.quote(_entity_key, safe="")
     async with aiohttp.ClientSession() as session:
+        # Clear Mem0 memories for both agents
         await asyncio.gather(
             _without_revok.clear_memories(session),
             _with_revok.clear_memories(session),
         )
+        # Clear Revok entity state so signal_count resets to 0 and score resets to None
+        try:
+            async with session.delete(
+                f"{revok_url}/v1/entities/{encoded}",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                _log.info("Revok entity reset: status=%s", resp.status)
+        except Exception as exc:
+            _log.warning("Could not reset Revok entity state: %s", exc)
 
     await db_module.reset_to_seed()
     _demo_state = state_module.reset_state()

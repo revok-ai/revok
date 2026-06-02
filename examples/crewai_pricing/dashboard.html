@@ -583,7 +583,7 @@
       <div class="step-number">1</div>
       <div class="step-body">
         <div class="step-title">Train agents on current pricing</div>
-        <div class="step-desc">Stores the current database price ($500/mo) into each agent's long-term memory via Mem0. Both agents now "know" the price — but only one knows it through Revok, which starts tracking confidence.</div>
+        <div class="step-desc">Stores the current database price ($500/mo) into each agent's long-term memory via Mem0. Both agents now "know" the price. Confidence starts <strong style="color:#22c55e;">fresh</strong> — no CDC events have fired yet.</div>
         <button class="btn btn-blue" id="btn-load" onclick="doAction('load-memory', this)">
           <span class="spinner"></span> Store price in agent memory
         </button>
@@ -608,10 +608,10 @@
     <div class="scenario-step">
       <div class="step-number">3</div>
       <div class="step-body">
-        <div class="step-title">Propagate the change to agent memory</div>
-        <div class="step-desc">Writes the new price into agent memory — simulating a downstream event (webhook, CDC, pipeline). The <strong style="color:#4ade80;">with-Revok agent</strong> receives it through the Revok proxy, which scores confidence. The <strong style="color:#f87171;">without-Revok agent</strong> gets a direct write — no tracking, no decay.</div>
+        <div class="step-title">Fire a CDC signal</div>
+        <div class="step-desc">Simulates a downstream event (webhook, CDC pipeline) notifying the <strong style="color:#4ade80;">with-Revok agent</strong> that pricing data changed. Revok intercepts the write, detects the entity, and <strong style="color:#ef4444;">degrades confidence immediately</strong>. The <strong style="color:#f87171;">without-Revok agent</strong> receives no event — its memory stays unchanged.</div>
         <button class="btn btn-red" id="btn-signal" onclick="doAction('trigger-signal', this)">
-          <span class="spinner"></span> Write updated price to agent memories
+          <span class="spinner"></span> Fire CDC signal →
         </button>
       </div>
     </div>
@@ -901,7 +901,7 @@
         banner.style.display = '';
       } else if (['degraded', 'stale', 'fresh'].includes(status)) {
         banner.className = 'agent-banner ' + status;
-        const labels = { fresh: '✓ Confidence fresh — memory trusted', degraded: '⚠ Confidence degraded — treat with caution', stale: '✗ Confidence stale — should re-verify' };
+        const labels = { fresh: '✓ Confidence fresh — memory trusted', degraded: '⚠ Confidence degraded — this information may need verification', stale: '✗ Confidence stale — should re-verify' };
         banner.textContent = labels[status] || status;
         banner.style.display = '';
       } else {
@@ -1033,7 +1033,7 @@
       banner.textContent = '\u2713 Re-verified against live database';
       banner.style.display = '';
     } else if (['degraded', 'stale', 'fresh'].includes(status)) {
-      const labels = { fresh: '\u2713 Confidence fresh \u2014 memory trusted', degraded: '\u26a0 Confidence degraded \u2014 treat with caution', stale: '\u2717 Confidence stale \u2014 should re-verify' };
+      const labels = { fresh: '\u2713 Confidence fresh \u2014 memory trusted', degraded: '\u26a0 Confidence degraded \u2014 this information may need verification', stale: '\u2717 Confidence stale \u2014 should re-verify' };
       banner.className = 'agent-banner ' + status;
       banner.textContent = labels[status] || status;
       banner.style.display = '';
