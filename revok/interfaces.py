@@ -126,6 +126,17 @@ class StateStore(Protocol):
         """
         ...
 
+    async def delete(self, entity_key: str) -> bool:
+        """Delete the record for an entity key.
+
+        Args:
+            entity_key: Normalized entity identifier.
+
+        Returns:
+            True if a record was deleted, False if it did not exist.
+        """
+        ...
+
     async def close(self) -> None:
         """Flush pending writes and release resources.
 

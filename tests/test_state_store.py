@@ -227,3 +227,22 @@ async def test_corrupted_db_raises_runtime_error(tmp_path):
 
     with pytest.raises(RuntimeError, match="corrupted"):
         await store.open()
+
+
+# ---------------------------------------------------------------------------
+# delete()
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_existing_record_returns_true(store):
+    """delete() returns True and removes the record when it exists."""
+    await store.put(make_record("alice"))
+    result = await store.delete("alice")
+    assert result is True
+    assert await store.get("alice") is None
+
+
+async def test_delete_nonexistent_record_returns_false(store):
+    """delete() returns False without error when the entity key is not found."""
+    result = await store.delete("nobody")
+    assert result is False

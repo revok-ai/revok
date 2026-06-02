@@ -229,6 +229,27 @@ class SqliteStateStore:
             for row in rows
         ]
 
+    async def delete(self, entity_key: str) -> bool:
+        """Delete the record for an entity key.
+
+        Removes from both the SQLite store and the hot-cache layer.
+
+        Args:
+            entity_key: Normalized entity identifier.
+
+        Returns:
+            True if a row was deleted, False if it did not exist.
+        """
+        assert self._db is not None, "SqliteStateStore.open() must be called before delete()"
+        async with self._db.execute(
+            "DELETE FROM entity_records WHERE entity_key = ?",
+            (entity_key,),
+        ) as cursor:
+            deleted = cursor.rowcount > 0
+        await self._db.commit()
+        self._hot.pop(entity_key, None)
+        return deleted
+
     async def close(self) -> None:
         """Close the SQLite connection. Idempotent."""
         if self._db is not None:

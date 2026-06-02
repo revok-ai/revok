@@ -233,6 +233,24 @@ def build_app(
             body=json.dumps(dataclasses.asdict(record)).encode(),
         )
 
+    async def _handle_delete_entity(
+        request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        """DELETE /v1/entities/{entity_key} — remove the entity record."""
+        entity_key = request.match_info["entity_key"]
+        deleted = await store.delete(entity_key)
+        if not deleted:
+            return aiohttp.web.Response(
+                status=404,
+                content_type="application/json",
+                body=json.dumps({"error": "not_found"}).encode(),
+            )
+        return aiohttp.web.Response(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"deleted": entity_key}).encode(),
+        )
+
     async def _handle_list_entities(
         request: aiohttp.web.Request,
     ) -> aiohttp.web.Response:
@@ -334,6 +352,7 @@ def build_app(
 
     app = aiohttp.web.Application()
     app.router.add_get("/v1/entities/{entity_key}", _handle_get_entity)
+    app.router.add_delete("/v1/entities/{entity_key}", _handle_delete_entity)
     app.router.add_get("/v1/entities", _handle_list_entities)
     app.router.add_route(aiohttp.hdrs.METH_ANY, "/{path_info:.*}", _handle)
     return app
