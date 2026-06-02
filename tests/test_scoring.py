@@ -14,7 +14,11 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests for revok.scoring.ScoringEngine."""
+"""Tests for revok.scoring.ScoringEngine (confidence / pressure model).
+
+Confidence DEGRADES when a signal arrives; it RECOVERS toward score_cap when
+no new signals arrive.
+"""
 
 import math
 
@@ -50,58 +54,141 @@ def make_record(score: float, last_seen: float) -> EntityRecord:
     )
 
 
-def test_first_signal_score_equals_signal_strength(engine):
-    """No prior record → score equals signal_strength."""
+# ---------------------------------------------------------------------------
+# Core formula — score() degradation
+# ---------------------------------------------------------------------------
+
+
+def test_first_signal_equals_score_cap_minus_signal_strength(engine):
+    """No prior record → score = score_cap - signal_strength."""
     score = engine.score(None, now=1000.0)
-    assert score == pytest.approx(SIGNAL_STRENGTH)
+    assert score == pytest.approx(SCORE_CAP - SIGNAL_STRENGTH)
 
 
-def test_second_signal_accumulates_higher_score(engine):
-    """Successive signals for the same entity raise the score."""
-    now = 1000.0
-    record = make_record(score=SIGNAL_STRENGTH, last_seen=now)
-    score2 = engine.score(record, now=now)  # zero elapsed time
-    assert score2 > SIGNAL_STRENGTH
-
-
-def test_score_after_zero_elapsed_equals_prev_plus_signal_strength(engine):
-    """At Δt=0 decay is 1.0, so new score = existing + signal_strength."""
-    existing_score = 0.4
+def test_score_at_zero_elapsed_subtracts_signal_strength(engine):
+    """At Δt=0 no recovery occurs, so new score = existing - signal_strength."""
+    existing_score = 0.8
     now = 5000.0
     record = make_record(score=existing_score, last_seen=now)
     result = engine.score(record, now=now)
-    assert result == pytest.approx(existing_score + SIGNAL_STRENGTH)
+    assert result == pytest.approx(existing_score - SIGNAL_STRENGTH)
 
 
-def test_score_decreases_monotonically_between_signals(engine):
-    """decay_at() returns a lower value for larger Δt (SC-007)."""
-    record = make_record(score=0.9, last_seen=0.0)
-    score_t1 = engine.decay_at(record, now=1000.0)
-    score_t2 = engine.decay_at(record, now=2000.0)
-    assert score_t2 < score_t1
+def test_successive_rapid_signals_degrade_score(engine):
+    """Each successive signal at Δt≈0 lowers the score further."""
+    now = 1000.0
+    # Start just after the first signal
+    record = make_record(score=SCORE_CAP - SIGNAL_STRENGTH, last_seen=now)
+    score2 = engine.score(record, now=now)
+    assert score2 < SCORE_CAP - SIGNAL_STRENGTH
 
 
-def test_score_never_exceeds_score_cap(engine):
-    """Repeated signals cannot push the score above score_cap."""
-    record = make_record(score=SCORE_CAP - 0.01, last_seen=1000.0)
+def test_score_never_goes_below_zero(engine):
+    """Score is floored at 0.0 even when signal_strength exceeds current score."""
+    record = make_record(score=0.1, last_seen=1000.0)
     result = engine.score(record, now=1000.0)
-    assert result <= SCORE_CAP
+    assert result >= 0.0
 
 
-def test_score_cap_exactly_applied():
-    """signal_strength alone at cap produces exactly score_cap."""
+def test_first_signal_with_very_high_strength_floors_at_zero():
+    """signal_strength > score_cap still produces 0.0, not a negative score."""
     high_strength_engine = ScoringEngine(
         ScoringConfig(half_life_seconds=HALF_LIFE, signal_strength=5.0, score_cap=1.0)
     )
     score = high_strength_engine.score(None, now=0.0)
-    assert score == pytest.approx(1.0)
+    assert score == pytest.approx(0.0)
 
 
-def test_decay_at_half_life_halves_score(engine):
-    """After exactly one half-life the decayed score is half the original."""
-    record = make_record(score=0.8, last_seen=0.0)
-    decayed = engine.decay_at(record, now=HALF_LIFE)
-    assert decayed == pytest.approx(0.4, rel=1e-6)
+# ---------------------------------------------------------------------------
+# Core formula — decay_at() recovery
+# ---------------------------------------------------------------------------
+
+
+def test_decay_at_recovers_toward_score_cap_over_time(engine):
+    """decay_at() returns a higher value as Δt increases (confidence recovers)."""
+    record = make_record(score=0.2, last_seen=0.0)
+    score_t1 = engine.decay_at(record, now=1000.0)
+    score_t2 = engine.decay_at(record, now=2000.0)
+    assert score_t2 > score_t1
+
+
+def test_decay_at_half_life_recovers_half_the_gap(engine):
+    """After exactly one half-life the gap to score_cap is halved."""
+    stored_score = 0.2
+    record = make_record(score=stored_score, last_seen=0.0)
+    recovered = engine.decay_at(record, now=HALF_LIFE)
+    expected = SCORE_CAP - (SCORE_CAP - stored_score) / 2.0
+    assert recovered == pytest.approx(expected, rel=1e-6)
+
+
+def test_decay_at_zero_elapsed_returns_stored_score(engine):
+    """At Δt=0 there is no recovery; decay_at returns the stored score unchanged."""
+    record = make_record(score=0.4, last_seen=1000.0)
+    result = engine.decay_at(record, now=1000.0)
+    assert result == pytest.approx(0.4)
+
+
+def test_fully_confident_record_stays_at_score_cap(engine):
+    """A record already at score_cap does not change over time."""
+    record = make_record(score=SCORE_CAP, last_seen=0.0)
+    assert engine.decay_at(record, now=HALF_LIFE) == pytest.approx(SCORE_CAP)
+
+
+# ---------------------------------------------------------------------------
+# Severity-aware degradation and recovery (user-facing requirements)
+# ---------------------------------------------------------------------------
+
+
+def test_high_severity_signal_drops_score_below_0_7():
+    """A single high-severity signal immediately drops confidence below 0.7."""
+    high_engine = ScoringEngine(
+        ScoringConfig(half_life_seconds=HALF_LIFE, signal_strength=0.4, score_cap=1.0)
+    )
+    score = high_engine.score(None, now=0.0)   # fresh entity, first signal
+    assert score < 0.7
+
+
+def test_critical_severity_signal_drops_score_below_0_3():
+    """A single critical-severity signal immediately drops confidence below 0.3."""
+    critical_engine = ScoringEngine(
+        ScoringConfig(half_life_seconds=HALF_LIFE, signal_strength=0.8, score_cap=1.0)
+    )
+    score = critical_engine.score(None, now=0.0)
+    assert score < 0.3
+
+
+def test_score_recovers_toward_one_over_time():
+    """After a signal degrades confidence, the score grows back toward 1.0."""
+    engine = ScoringEngine(
+        ScoringConfig(half_life_seconds=HALF_LIFE, signal_strength=0.8, score_cap=1.0)
+    )
+    # Critical signal fires: score drops to 0.2
+    initial_score = engine.score(None, now=0.0)
+    assert initial_score < 0.3
+
+    record = make_record(score=initial_score, last_seen=0.0)
+
+    # After one half-life (no new signal), gap to 1.0 is halved
+    score_after_half_life = engine.decay_at(record, now=HALF_LIFE)
+    assert score_after_half_life > initial_score
+
+    # After three half-lives the score should be above 0.7
+    score_after_3hl = engine.decay_at(record, now=3 * HALF_LIFE)
+    assert score_after_3hl > 0.7
+
+
+def test_multiple_signals_keep_score_low():
+    """Rapid successive signals accumulate pressure and keep confidence well below 0.7."""
+    engine = ScoringEngine(
+        ScoringConfig(half_life_seconds=HALF_LIFE, signal_strength=0.4, score_cap=1.0)
+    )
+    # First signal
+    score = engine.score(None, now=0.0)
+    # Four more signals arriving 1 second apart (half-life is 1 day — no meaningful recovery)
+    for i in range(1, 5):
+        record = make_record(score=score, last_seen=float(i - 1))
+        score = engine.score(record, now=float(i))
+    assert score < 0.3
 
 
 # ---------------------------------------------------------------------------
