@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -83,14 +83,44 @@ class PatternConfig:
 
 
 @dataclass(frozen=True)
+class EntityDef:
+    """A named entity with human-readable aliases for catalog-based extraction.
+
+    Attributes:
+        id: Canonical entity identifier used as the store key (e.g., ``"apex_hoodie"``).
+        display_name: Human-readable label. Defaults to *id* when omitted.
+        aliases: Non-empty list of literal strings that identify this entity in text.
+            Matching is case-insensitive and word-boundary aware; no regex knowledge
+            required.
+    """
+
+    id: str
+    display_name: str
+    aliases: list[str]
+
+
+@dataclass(frozen=True)
 class EntityMatcherConfig:
     """Entity extraction configuration.
 
+    Supports two extraction modes — both may be active simultaneously:
+
+    * **Catalog mode** (``entities``): list entities with plain-text aliases.
+      Revok compiles word-boundary patterns internally. Best for demos and
+      small known sets (\u2264 50 entities).
+    * **Pattern mode** (``patterns``): raw named regex patterns for advanced
+      use cases. Legacy format; still fully supported.
+
+    For large catalogs or production deployments, omit both and send
+    ``X-Revok-Entity: <id>`` with each write request \u2014 zero YAML config needed.
+
     Attributes:
-        patterns: Non-empty list of named regex patterns.
+        entities: Catalog entities with literal aliases.
+        patterns: Legacy named regex patterns.
     """
 
-    patterns: list[PatternConfig]
+    entities: list[EntityDef] = field(default_factory=list)
+    patterns: list[PatternConfig] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -268,32 +298,62 @@ def load_config(path: str) -> Config:
         write_paths=[str(p) for p in write_paths],
     )
 
-    # --- entity_matcher ---
-    em = _require(data, "entity_matcher")
-    patterns_raw = _require(em, "patterns", context="entity_matcher")
-
-    if not isinstance(patterns_raw, list) or not patterns_raw:
-        raise ConfigError("entity_matcher.patterns must be a non-empty list.")
-
+    # --- entity_matcher (optional) ---
+    # Absent → header-only mode; present → validate entities and/or patterns.
+    em_raw = data.get("entity_matcher")
+    entity_defs: list[EntityDef] = []
     pattern_cfgs: list[PatternConfig] = []
-    for i, pat in enumerate(patterns_raw):
-        if not isinstance(pat, dict):
-            raise ConfigError(f"entity_matcher.patterns[{i}] must be a mapping.")
-        name = pat.get("name")
-        regex = pat.get("regex")
-        if not name:
-            raise ConfigError(f"entity_matcher.patterns[{i}].name is required.")
-        if not regex:
-            raise ConfigError(f"entity_matcher.patterns[{i}].regex is required.")
-        try:
-            re.compile(str(regex))
-        except re.error as exc:
-            raise ConfigError(
-                f"entity_matcher.patterns[{i}].regex is not a valid regex: {exc}"
-            ) from exc
-        pattern_cfgs.append(PatternConfig(name=str(name), regex=str(regex)))
 
-    entity_matcher_cfg = EntityMatcherConfig(patterns=pattern_cfgs)
+    if em_raw is not None:
+        if not isinstance(em_raw, dict):
+            raise ConfigError("'entity_matcher' must be a YAML mapping.")
+
+        # Catalog mode: alias entities
+        entities_raw = em_raw.get("entities") or []
+        if not isinstance(entities_raw, list):
+            raise ConfigError("entity_matcher.entities must be a list.")
+        for i, ent in enumerate(entities_raw):
+            if not isinstance(ent, dict):
+                raise ConfigError(f"entity_matcher.entities[{i}] must be a mapping.")
+            eid = ent.get("id")
+            if not eid:
+                raise ConfigError(f"entity_matcher.entities[{i}].id is required.")
+            aliases_raw = ent.get("aliases") or []
+            if not isinstance(aliases_raw, list) or not aliases_raw:
+                raise ConfigError(
+                    f"entity_matcher.entities[{i}].aliases must be a non-empty list."
+                )
+            display_name = str(ent.get("display_name") or eid)
+            entity_defs.append(
+                EntityDef(
+                    id=str(eid),
+                    display_name=display_name,
+                    aliases=[str(a) for a in aliases_raw],
+                )
+            )
+
+        # Pattern mode: legacy named regex patterns
+        patterns_raw = em_raw.get("patterns") or []
+        if not isinstance(patterns_raw, list):
+            raise ConfigError("entity_matcher.patterns must be a list.")
+        for i, pat in enumerate(patterns_raw):
+            if not isinstance(pat, dict):
+                raise ConfigError(f"entity_matcher.patterns[{i}] must be a mapping.")
+            name = pat.get("name")
+            regex = pat.get("regex")
+            if not name:
+                raise ConfigError(f"entity_matcher.patterns[{i}].name is required.")
+            if not regex:
+                raise ConfigError(f"entity_matcher.patterns[{i}].regex is required.")
+            try:
+                re.compile(str(regex))
+            except re.error as exc:
+                raise ConfigError(
+                    f"entity_matcher.patterns[{i}].regex is not a valid regex: {exc}"
+                ) from exc
+            pattern_cfgs.append(PatternConfig(name=str(name), regex=str(regex)))
+
+    entity_matcher_cfg = EntityMatcherConfig(entities=entity_defs, patterns=pattern_cfgs)
 
     # --- scoring ---
     sc = _require(data, "scoring")

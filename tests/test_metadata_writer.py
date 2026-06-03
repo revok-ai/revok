@@ -137,3 +137,65 @@ async def test_enriched_payload_upstream_dict_contains_x_revok(matcher, scorer, 
     assert "x_revok" in upstream
     assert upstream["msg"] == "hi"
     assert len(upstream["x_revok"]["entities"]) == 1
+
+
+async def test_header_tagged_entity_bypasses_text_matching(scorer, store):
+    """X-Revok-Entity header takes priority; text matching is skipped entirely."""
+    # Matcher configured for "Alice" — the signal content also mentions Alice,
+    # but the header should win and produce only one entity with the header id.
+    config = EntityMatcherConfig(
+        patterns=[PatternConfig(name="person", regex=r"\bAlice\b")]
+    )
+    header_matcher = EntityMatcher(config)
+    signal = Signal(
+        raw_content="Alice was here",
+        source_id="test-agent",
+        timestamp=1000.0,
+        http_method="POST",
+        http_path="/v1/memories",
+        original_body=b'{"text": "test"}',
+        headers={"X-Revok-Entity": "apex_hoodie"},
+    )
+    payload = await enrich(signal, header_matcher, scorer, store)
+
+    assert len(payload.entities) == 1
+    assert payload.entities[0].entity_key == "apex_hoodie"
+    assert payload.entities[0].pattern_name == "header"
+
+
+async def test_header_tagged_entity_key_is_lowercased(scorer, store):
+    """Header value is normalised to lowercase for the store key."""
+    config = EntityMatcherConfig()
+    empty_matcher = EntityMatcher(config)
+    signal = Signal(
+        raw_content="",
+        source_id="test-agent",
+        timestamp=1000.0,
+        http_method="POST",
+        http_path="/v1/memories",
+        original_body=b"{}",
+        headers={"x-revok-entity": "  Apex_Hoodie  "},
+    )
+    payload = await enrich(signal, empty_matcher, scorer, store)
+
+    assert len(payload.entities) == 1
+    assert payload.entities[0].entity_key == "apex_hoodie"
+
+
+async def test_header_case_insensitive_lookup(scorer, store):
+    """X-Revok-Entity header is matched case-insensitively."""
+    config = EntityMatcherConfig()
+    empty_matcher = EntityMatcher(config)
+    signal = Signal(
+        raw_content="",
+        source_id="test-agent",
+        timestamp=1000.0,
+        http_method="POST",
+        http_path="/v1/memories",
+        original_body=b"{}",
+        headers={"x-REVOK-ENTITY": "solar_backpack"},
+    )
+    payload = await enrich(signal, empty_matcher, scorer, store)
+
+    assert len(payload.entities) == 1
+    assert payload.entities[0].entity_key == "solar_backpack"

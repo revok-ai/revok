@@ -30,7 +30,7 @@ import time
 
 from revok.entity_matcher import EntityMatcher
 from revok.interfaces import StateStore
-from revok.models import EnrichedPayload, EntityRecord, Signal
+from revok.models import EnrichedPayload, Entity, EntityRecord, Signal
 from revok.scoring import ScoringEngine
 from revok.causal_graph import CausalGraph
 
@@ -85,7 +85,26 @@ async def enrich(
     scored_records: list[EntityRecord] = []
     graph = CausalGraph()
     try:
-        entities = matcher.match(signal.raw_content)
+        # Header-tagged mode: caller explicitly names the entity, bypasses text
+        # matching. Recommended for large catalogs and production deployments.
+        header_entity_id: str | None = next(
+            (
+                v.strip()
+                for k, v in signal.headers.items()
+                if k.lower() == "x-revok-entity"
+            ),
+            None,
+        )
+        if header_entity_id:
+            entities: list[Entity] = [
+                Entity(
+                    key=header_entity_id.lower(),
+                    raw_text=header_entity_id,
+                    pattern_name="header",
+                )
+            ]
+        else:
+            entities = matcher.match(signal.raw_content)
         for entity in entities:
             existing = await store.get(entity.key)
             new_score = scorer.score(existing, now)

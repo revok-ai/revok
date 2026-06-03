@@ -27,16 +27,36 @@ upstream:
     - "/v1/memories"
 
 entity_matcher:
-  # Named regex patterns for entity extraction.
-  # Patterns are applied in order; first match wins for a given span.
-  patterns:
-    - name: "person"
-      # Matches two-word capitalized names (e.g., "Alice Smith").
-      regex: "\\b[A-Z][a-z]+ [A-Z][a-z]+\\b"
-    - name: "email"
-      regex: "[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+"
-    - name: "url"
-      regex: "https?://[^\\s]+"
+  # --- Catalog mode (recommended for demos and small known sets ≤ 50 entities) ---
+  # List entities with plain-text aliases. Matching is case-insensitive and
+  # word-boundary aware — no regex knowledge required. The entity key stored
+  # in Revok is always the canonical `id`, regardless of which alias matched.
+  entities:
+    - id: "apex_hoodie"
+      display_name: "Apex Fleece Hoodie"
+      aliases:
+        - "Apex Hoodie"
+        - "apex fleece"
+        - "SKU-1042"
+    - id: "solar_backpack"
+      display_name: "Solar Commuter Backpack"
+      aliases:
+        - "Solar Backpack"
+        - "solar commuter"
+        - "SKU-2087"
+
+  # --- Pattern mode (advanced / legacy) ---
+  # Raw named regex patterns. Use when entity names follow a predictable
+  # structure (email addresses, version numbers, etc.).
+  # patterns:
+  #   - name: "email"
+  #     regex: "[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+"
+
+  # --- Header-tagged mode (large catalogs / production) ---
+  # For large catalogs or any deployment where the calling agent already knows
+  # the entity, omit 'entities' and 'patterns' entirely and send:
+  #   X-Revok-Entity: <entity-id>
+  # with every write request. Zero YAML configuration needed.
 
 scoring:
   # Half-life for the exponential decay formula (seconds).
