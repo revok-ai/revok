@@ -133,10 +133,18 @@ async def _revok_reachable() -> bool:
 
 
 @app.get("/")
-async def index() -> HTMLResponse:
-    """Serve the dashboard HTML."""
-    content = (APP_DIR / "dashboard.html").read_text(encoding="utf-8")
-    return HTMLResponse(content=content, media_type="text/html; charset=utf-8")
+async def index() -> JSONResponse:
+    """Dashboard moved to the Next.js app at examples/crewai_pricing/dashboard."""
+    return JSONResponse(
+        {
+            "message": "Dashboard is now a Next.js app. Run `npm run dev` in ./dashboard.",
+            "api": {
+                "state": "/state",
+                "stream": "/stream",
+                "health": "/health",
+            },
+        }
+    )
 
 
 @app.get("/calculator")
@@ -632,6 +640,86 @@ async def stream_ask_agent(
         generate(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _build_state_snapshot() -> dict[str, Any]:
+    """Return the canonical demo-state snapshot used by `/state` and `/stream`."""
+    db_row = await db_module.get_price(db_module.PRODUCT_NAME)
+    entity = await _fetch_revok_entity()
+    revok_ok = await _revok_reachable()
+
+    # Mem0 reachability
+    mem0_url = os.getenv("MEM0_URL", "http://localhost:7770")
+    mem0_ok = False
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{mem0_url}/memories",
+                params={"user_id": "health-check"},
+                timeout=aiohttp.ClientTimeout(total=2),
+            ) as r:
+                mem0_ok = r.status < 500
+    except Exception:
+        mem0_ok = False
+
+    if entity is not None:
+        score: float | None = float(entity["score"])
+        sig_count = int(entity["signal_count"])
+        conf_status = _score_to_status(score)
+    elif _demo_state.get("memory_content"):
+        score = 1.0
+        sig_count = 0
+        conf_status = "fresh"
+    else:
+        score = None
+        sig_count = _demo_state.get("signal_count", 0)
+        conf_status = _score_to_status(score)
+
+    if db_row:
+        _demo_state["db_price"] = db_row[db_module.COL_PRICE]
+        _demo_state["db_updated_at"] = db_row[db_module.COL_UPDATED]
+    _demo_state["confidence_score"] = score
+    _demo_state["confidence_status"] = conf_status
+    _demo_state["signal_count"] = sig_count
+
+    return {
+        **_demo_state,
+        "db_product": db_module.PRODUCT_NAME,
+        "product_name": db_module.PRODUCT_NAME,
+        "entity_key": _entity_key,
+        "revok_reachable": revok_ok,
+        "services": {"revok": revok_ok, "mem0": mem0_ok},
+    }
+
+
+@app.get("/stream")
+async def stream_state() -> StreamingResponse:
+    """SSE endpoint emitting the full demo state once per second."""
+
+    async def generate():
+        last_payload: str | None = None
+        try:
+            while True:
+                snapshot = await _build_state_snapshot()
+                payload = json.dumps(snapshot, default=str)
+                if payload != last_payload:
+                    yield f"data: {payload}\n\n"
+                    last_payload = payload
+                else:
+                    yield ": ping\n\n"
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

@@ -219,6 +219,15 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Next.js (examples/crewai_pricing/dashboard)
+examples/crewai_pricing/dashboard/.next/
+examples/crewai_pricing/dashboard/node_modules/
+examples/crewai_pricing/dashboard/.env.local
+
+# Demo runtime artifacts
+examples/crewai_pricing/pricing_demo.db
+examples/crewai_pricing/demo_state.json
+
 # Example runtime / generated files
 *.db
 demo_state.json

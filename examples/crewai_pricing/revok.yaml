@@ -23,7 +23,7 @@ entity_matcher:
 scoring:
   # half_life_seconds: time for confidence to decay to 0.5 after a signal
   # 43200 = 12 hours  |  600 = 10 min for demos  |  120 = 2 min  |  30 = very fast
-  half_life_seconds: 60
+  half_life_seconds: 90
   signal_strength: 0.8
   score_cap: 1.0
 
