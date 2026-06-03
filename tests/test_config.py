@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from revok.config import ConfigError, load_config
+from revok.config import ConfigError, EntityDef, load_config
 
 
 VALID_YAML = """\
@@ -74,6 +74,42 @@ class TestLoadConfigValid:
         assert len(cfg.entity_matcher.patterns) == 1
         assert cfg.entity_matcher.patterns[0].name == "person"
 
+    def test_entities_catalog_loaded(self, tmp_path: Path):
+        yaml = VALID_YAML.replace(
+            "entity_matcher:\n"
+            "  patterns:\n"
+            "    - name: \"person\"\n"
+            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
+            "entity_matcher:\n"
+            "  entities:\n"
+            "    - id: apex_hoodie\n"
+            "      display_name: Apex Hoodie\n"
+            "      aliases:\n"
+            "        - Apex Hoodie\n"
+            "        - SKU-1042",
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert len(cfg.entity_matcher.entities) == 1
+        assert cfg.entity_matcher.entities[0].id == "apex_hoodie"
+        assert cfg.entity_matcher.entities[0].display_name == "Apex Hoodie"
+        assert cfg.entity_matcher.entities[0].aliases == ["Apex Hoodie", "SKU-1042"]
+        assert cfg.entity_matcher.patterns == []
+
+    def test_entity_display_name_defaults_to_id(self, tmp_path: Path):
+        yaml = VALID_YAML.replace(
+            "entity_matcher:\n"
+            "  patterns:\n"
+            "    - name: \"person\"\n"
+            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
+            "entity_matcher:\n"
+            "  entities:\n"
+            "    - id: apex_hoodie\n"
+            "      aliases:\n"
+            "        - Apex Hoodie",
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.entities[0].display_name == "apex_hoodie"
+
     def test_scoring_values(self, tmp_path: Path):
         cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
         assert cfg.scoring.half_life_seconds == 86400.0
@@ -97,11 +133,18 @@ class TestLoadConfigMissingKeys:
         with pytest.raises(ConfigError, match="mem0_url"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_missing_entity_matcher(self, tmp_path: Path):
-        lines = [l for l in VALID_YAML.splitlines() if not l.startswith("entity_matcher")]
-        yaml = "\n".join(lines)
-        with pytest.raises(ConfigError):
-            load_config(_write_yaml(tmp_path, yaml))
+    def test_missing_entity_matcher_is_valid(self, tmp_path: Path):
+        """entity_matcher section is optional; absent means header-only mode."""
+        yaml_no_em = VALID_YAML.replace(
+            "entity_matcher:\n"
+            "  patterns:\n"
+            "    - name: \"person\"\n"
+            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"\n",
+            "",
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml_no_em))
+        assert cfg.entity_matcher.patterns == []
+        assert cfg.entity_matcher.entities == []
 
 
 class TestLoadConfigValidationRules:
@@ -138,12 +181,41 @@ class TestLoadConfigValidationRules:
         with pytest.raises(ConfigError, match="regex"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_empty_patterns_list(self, tmp_path: Path):
+    def test_empty_patterns_list_is_valid(self, tmp_path: Path):
+        """Empty patterns list is accepted; entity_matcher still usable via catalog or header."""
         yaml = VALID_YAML.replace(
             "  patterns:\n    - name: \"person\"\n      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
             "  patterns: []",
         )
-        with pytest.raises(ConfigError, match="patterns"):
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.patterns == []
+
+    def test_entity_missing_id_raises(self, tmp_path: Path):
+        yaml = VALID_YAML.replace(
+            "entity_matcher:\n"
+            "  patterns:\n"
+            "    - name: \"person\"\n"
+            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
+            "entity_matcher:\n"
+            "  entities:\n"
+            "    - aliases:\n"
+            "        - Apex Hoodie",
+        )
+        with pytest.raises(ConfigError, match="id"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_entity_empty_aliases_raises(self, tmp_path: Path):
+        yaml = VALID_YAML.replace(
+            "entity_matcher:\n"
+            "  patterns:\n"
+            "    - name: \"person\"\n"
+            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
+            "entity_matcher:\n"
+            "  entities:\n"
+            "    - id: apex_hoodie\n"
+            "      aliases: []",
+        )
+        with pytest.raises(ConfigError, match="aliases"):
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_file_not_found(self, tmp_path: Path):

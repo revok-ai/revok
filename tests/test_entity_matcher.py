@@ -18,7 +18,7 @@
 
 import pytest
 
-from revok.config import EntityMatcherConfig, PatternConfig
+from revok.config import EntityDef, EntityMatcherConfig, PatternConfig
 from revok.entity_matcher import EntityMatcher
 
 
@@ -94,3 +94,89 @@ def test_multiple_matches_same_pattern_deduplicates():
     # "alice" appears twice but deduplication keeps only first
     assert len(entities) == 1
     assert entities[0].key == "alice"
+
+
+# ---------------------------------------------------------------------------
+# Alias catalog mode tests
+# ---------------------------------------------------------------------------
+
+
+def make_catalog_matcher(*defs: tuple[str, str, list[str]]) -> EntityMatcher:
+    """Create an EntityMatcher from (id, display_name, aliases) tuples."""
+    config = EntityMatcherConfig(
+        entities=[
+            EntityDef(id=eid, display_name=dname, aliases=aliases)
+            for eid, dname, aliases in defs
+        ]
+    )
+    return EntityMatcher(config)
+
+
+def test_alias_catalog_key_is_canonical_id():
+    """Matched alias text normalises to EntityDef.id, not raw_text.lower()."""
+    matcher = make_catalog_matcher(("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("Customer asked about the Apex Hoodie today")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+    assert entities[0].raw_text == "Apex Hoodie"
+
+
+def test_alias_catalog_case_insensitive():
+    matcher = make_catalog_matcher(("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("asked about the APEX HOODIE in blue")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_alias_catalog_multiple_aliases_same_entity():
+    """Any alias produces the same canonical id; deduplication fires after first."""
+    matcher = make_catalog_matcher(
+        ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie", "apex fleece", "SKU-1042"])
+    )
+    entities = matcher.match("The apex fleece and Apex Hoodie are the same product")
+    # Both aliases match the same entity — deduplication keeps first occurrence
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_alias_catalog_multiple_entities():
+    matcher = make_catalog_matcher(
+        ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]),
+        ("solar_backpack", "Solar Backpack", ["Solar Backpack"]),
+    )
+    entities = matcher.match("Looking at the Apex Hoodie and the Solar Backpack")
+    keys = {e.key for e in entities}
+    assert keys == {"apex_hoodie", "solar_backpack"}
+
+
+def test_alias_catalog_sku_alias():
+    """SKU strings (with hyphens) are matched correctly at word boundaries."""
+    matcher = make_catalog_matcher(("apex_hoodie", "Apex Hoodie", ["SKU-1042"]))
+    entities = matcher.match("Please check price for SKU-1042 in warehouse")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_alias_catalog_no_match_returns_empty():
+    matcher = make_catalog_matcher(("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("Nothing about that product here")
+    assert entities == []
+
+
+def test_alias_catalog_and_legacy_patterns_coexist():
+    """Both modes active simultaneously; alias catalog entries checked first."""
+    config = EntityMatcherConfig(
+        entities=[EntityDef(id="apex_hoodie", display_name="Apex Hoodie", aliases=["Apex Hoodie"])],
+        patterns=[PatternConfig(name="person", regex=r"\bAlice\b")],
+    )
+    matcher = EntityMatcher(config)
+    entities = matcher.match("Alice asked about the Apex Hoodie")
+    keys = {e.key for e in entities}
+    assert "apex_hoodie" in keys
+    assert "alice" in keys
+
+
+def test_empty_config_returns_empty_list():
+    """No entities or patterns configured — match() always returns []."""
+    matcher = EntityMatcher(EntityMatcherConfig())
+    assert matcher.match("Apex Hoodie Alice anything") == []
