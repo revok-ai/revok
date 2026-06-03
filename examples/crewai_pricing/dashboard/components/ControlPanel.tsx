@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { API_URL } from "@/lib/api";
 
+const DEFAULT_QUESTION = "What is the current price for Redis Enterprise per month?";
+
 type ActionId = "load-memory" | "change-price" | "trigger-signal" | "ask-agent" | "reset";
 
 interface ActionDef {
@@ -79,14 +81,22 @@ const ACTIONS: readonly ActionDef[] = [
 
 export function ControlPanel() {
   const [running, setRunning] = useState<ActionId | null>(null);
+  const [question, setQuestion] = useState(DEFAULT_QUESTION);
 
   async function run(action: ActionDef): Promise<void> {
     setRunning(action.id);
     try {
+      const body =
+        action.id === "ask-agent"
+          ? JSON.stringify({ question: question.trim() || DEFAULT_QUESTION })
+          : action.body
+            ? JSON.stringify(action.body)
+            : undefined;
+
       const res = await fetch(`${API_URL}${action.endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: action.body ? JSON.stringify(action.body) : undefined,
+        body,
       });
       if (!res.ok) {
         let detail = `${res.status} ${res.statusText}`;
@@ -126,7 +136,7 @@ export function ControlPanel() {
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap gap-3">
-          {ACTIONS.map((action) => {
+          {ACTIONS.filter((a) => a.id !== "ask-agent" && a.id !== "reset").map((action) => {
             const isRunning = running === action.id;
             const Icon = action.icon;
             return (
@@ -148,6 +158,68 @@ export function ControlPanel() {
               </Button>
             );
           })}
+        </div>
+
+        {/* Step 4: question input + ask button on the same row */}
+        <div className="mt-3 flex gap-2 items-center">
+          <span className="font-mono text-xs text-slate-400 shrink-0">4</span>
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !anyRunning) {
+                const askAction = ACTIONS.find((a) => a.id === "ask-agent")!;
+                run(askAction);
+              }
+            }}
+            disabled={anyRunning}
+            placeholder={DEFAULT_QUESTION}
+            className="flex-1 rounded-md border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:opacity-50"
+          />
+          {(() => {
+            const askAction = ACTIONS.find((a) => a.id === "ask-agent")!;
+            const isRunning = running === "ask-agent";
+            return (
+              <Button
+                variant={askAction.variant}
+                disabled={anyRunning}
+                onClick={() => run(askAction)}
+                className="shrink-0"
+              >
+                {isRunning ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <MessageSquare className="h-4 w-4" />
+                )}
+                <span>Ask Agent</span>
+              </Button>
+            );
+          })()}
+        </div>
+
+        {/* Reset — always last, separated */}
+        <div className="mt-3">
+          {(() => {
+            const resetAction = ACTIONS.find((a) => a.id === "reset")!;
+            const isRunning = running === "reset";
+            return (
+              <Button
+                variant={resetAction.variant}
+                disabled={anyRunning}
+                onClick={() => run(resetAction)}
+                className="min-w-[180px]"
+              >
+                {isRunning ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4" />
+                )}
+                <span className="font-mono text-xs opacity-70">{resetAction.step}</span>
+                <span>{resetAction.label}</span>
+              </Button>
+            );
+          })()}
         </div>
       </CardContent>
     </Card>

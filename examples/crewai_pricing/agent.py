@@ -191,6 +191,7 @@ class PricingSalesAgent:
         session: aiohttp.ClientSession,
         product_name: str,
         entity_key: str | None,
+        question: str = "What is the current price for Redis Enterprise per month?",
     ) -> AgentAnswer:
         """Answer "Is *product_name* within the customer budget?"
 
@@ -245,6 +246,7 @@ class PricingSalesAgent:
                 score=None,
                 signal_count=0,
                 live_price=None,
+                question=question,
             )
             return AgentAnswer(
                 answer=answer,
@@ -273,6 +275,7 @@ class PricingSalesAgent:
             score=score,
             signal_count=signal_count,
             live_price=live_price,
+            question=question,
         )
         return AgentAnswer(
             answer=answer,
@@ -516,6 +519,7 @@ class PricingSalesAgent:
         score: float | None,
         signal_count: int,
         live_price: float | None,
+        question: str = "What is the current price for Redis Enterprise per month?",
     ) -> str:
         """Call the LLM to generate a natural-language answer (batch mode).
 
@@ -524,7 +528,8 @@ class PricingSalesAgent:
         :meth:`_build_prompts`.
         """
         system, user = self._build_prompts(
-            product_name, memory_quote, use_revok, status, score, signal_count, live_price
+            product_name, memory_quote, use_revok, status, score, signal_count, live_price,
+            question=question,
         )
 
         cfg = _llm_config()

@@ -12,35 +12,38 @@ interface AgentAnswerProps {
   state: DemoState | null;
 }
 
-function withRevokBanner(status: ConfidenceStatus): {
-  text: string;
-  className: string;
-  borderColor: string;
-} {
+/** Returns the bottom notification for the With Revok panel.
+ *  Only shows memory health after an answer exists; before that, neutral waiting state. */
+function memoryNotification(
+  status: ConfidenceStatus,
+  hasAnswer: boolean,
+): { text: string; className: string } {
+  if (!hasAnswer) {
+    return {
+      text: "Ask a question to see memory-verified answers",
+      className: "bg-slate-500/10 text-slate-500 border-slate-500/30",
+    };
+  }
   switch (status) {
     case "fresh":
       return {
-        text: "Memory verified ✅",
-        className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
-        borderColor: "#22c55e",
+        text: "Answered using verified memory ✓",
+        className: "bg-emerald-500/10 text-emerald-400/80 border-emerald-500/25",
       };
     case "degraded":
       return {
-        text: "Re-verifying recommended ⚠️",
+        text: "Memory freshness low — answer may lag the market ⚠️",
         className: "bg-amber-500/15 text-amber-300 border-amber-500/40",
-        borderColor: "#f59e0b",
       };
     case "stale":
       return {
-        text: "Memory stale — re-verified with live data 🔄",
-        className: "bg-red-500/15 text-red-300 border-red-500/40",
-        borderColor: "#ef4444",
+        text: "Memory was stale — Revok fetched live data before answering ✅",
+        className: "bg-sky-500/15 text-sky-300 border-sky-500/40",
       };
     default:
       return {
-        text: "Confidence unknown",
-        className: "bg-slate-500/15 text-slate-300 border-slate-500/40",
-        borderColor: "#64748b",
+        text: "Memory state unknown",
+        className: "bg-slate-500/10 text-slate-500 border-slate-500/30",
       };
   }
 }
@@ -73,7 +76,7 @@ export function AgentAnswer({ state }: AgentAnswerProps) {
   const without = state?.answer_without_revok ?? null;
   const withRevok = state?.answer_with_revok ?? null;
   const status: ConfidenceStatus = state?.confidence_status ?? "unknown";
-  const banner = withRevokBanner(status);
+  const notification = memoryNotification(status, withRevok !== null);
   const showWarningIcon = status === "degraded" || status === "stale";
 
   return (
@@ -101,28 +104,19 @@ export function AgentAnswer({ state }: AgentAnswerProps) {
 
         <Separator />
 
+        {/* With Revok — brand colour is always green; only the notification reflects memory health */}
         <div
           className="space-y-2 pl-3 border-l-4"
-          style={{ borderColor: banner.borderColor }}
+          style={{ borderColor: "#22c55e" }}
         >
-          <Badge
-            className={
-              status === "fresh"
-                ? "bg-emerald-500/20 text-emerald-300"
-                : status === "degraded"
-                  ? "bg-amber-500/20 text-amber-300"
-                  : status === "stale"
-                    ? "bg-red-500/20 text-red-300"
-                    : "bg-slate-500/20 text-slate-300"
-            }
-          >
+          <Badge className="bg-emerald-500/20 text-emerald-300">
             With Revok
           </Badge>
           <TypewriterText text={withRevok?.answer} placeholder="No answer yet" />
           <div
-            className={`text-xs rounded border px-2 py-1 ${banner.className}`}
+            className={`text-xs rounded border px-2 py-1 ${notification.className}`}
           >
-            {banner.text}
+            {notification.text}
           </div>
         </div>
       </CardContent>

@@ -15,7 +15,7 @@ from typing import Any
 import aiohttp
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import Body, FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -382,19 +382,27 @@ async def trigger_signal() -> JSONResponse:
     )
 
 
+_DEFAULT_QUESTION = "What is the current price for Redis Enterprise per month?"
+
+
+class AskAgentRequest(BaseModel):
+    question: str = _DEFAULT_QUESTION
+
+
 @app.post("/actions/ask-agent")
-async def ask_agent() -> JSONResponse:
+async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONResponse:
     """Run the sales agent in both modes; store answers in state."""
     if _without_revok is None or _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
+    question = (body.question.strip() if body else "") or _DEFAULT_QUESTION
     product = db_module.PRODUCT_NAME
 
     async with aiohttp.ClientSession() as session:
         # Run sequentially so intermediate events appear in the live log.
         state_module.add_event(_demo_state, "Asking agent WITHOUT Revok…", kind="info")
         state_module.save(_demo_state)
-        ans_without = await _without_revok.answer_budget_question(session, product, None)
+        ans_without = await _without_revok.answer_budget_question(session, product, None, question=question)
 
         without_mode = "re-verified" if ans_without.re_verified else "from memory"
         state_module.add_event(
@@ -412,7 +420,7 @@ async def ask_agent() -> JSONResponse:
 
         state_module.add_event(_demo_state, "Asking agent WITH Revok…", kind="info")
         state_module.save(_demo_state)
-        ans_with = await _with_revok.answer_budget_question(session, product, _entity_key)
+        ans_with = await _with_revok.answer_budget_question(session, product, _entity_key, question=question)
 
         with_mode = ans_with.confidence_status + (" → re-verified" if ans_with.re_verified else "")
         state_module.add_event(
