@@ -20,8 +20,18 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DB_PATH: str = os.getenv("DB_PATH", "pricing_demo.db")
-PRODUCT_NAME: str = os.getenv("DB_PRODUCT_NAME", "Redis Enterprise")
+PRODUCT_NAME: str = os.getenv("DB_PRODUCT_NAME", "Orion Cache")
 SEED_PRICE: float = float(os.getenv("DB_SEED_PRICE", "500"))
+
+# Multi-product catalog seeded at startup (INSERT OR IGNORE).
+# The primary product (PRODUCT_NAME / SEED_PRICE) is always first.
+SEED_PRODUCTS: list[tuple[str, float]] = [
+    (PRODUCT_NAME, SEED_PRICE),
+    ("Nova Gateway", 299.0),
+    ("Atlas Search", 199.0),
+    ("Titan Queue", 149.0),
+    ("Spark Store", 99.0),
+]
 
 TABLE: str = "products"
 COL_ID: str = "id"
@@ -36,7 +46,7 @@ COL_UPDATED: str = "updated_at"
 
 
 async def init_db() -> None:
-    """Create the products table and seed the configured product row if absent."""
+    """Create the products table and seed all catalog rows if absent."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             f"""
@@ -48,17 +58,20 @@ async def init_db() -> None:
             )
             """
         )
-        await db.execute(
-            f"""
-            INSERT OR IGNORE INTO {TABLE} ({COL_NAME}, {COL_PRICE}, {COL_UPDATED})
-            VALUES (?, ?, ?)
-            """,
-            (PRODUCT_NAME, SEED_PRICE, _now_iso()),
-        )
+        now = _now_iso()
+        for name, price in SEED_PRODUCTS:
+            await db.execute(
+                f"""
+                INSERT OR IGNORE INTO {TABLE} ({COL_NAME}, {COL_PRICE}, {COL_UPDATED})
+                VALUES (?, ?, ?)
+                """,
+                (name, price, now),
+            )
         await db.commit()
     _log.info(
-        "Database ready at %s  product=%r  seed_price=%.2f",
+        "Database ready at %s  products=%d  primary=%r  seed_price=%.2f",
         DB_PATH,
+        len(SEED_PRODUCTS),
         PRODUCT_NAME,
         SEED_PRICE,
     )
@@ -106,6 +119,33 @@ async def update_price(product_name: str, new_price: float) -> dict[str, Any]:
     return {COL_NAME: product_name, COL_PRICE: new_price, COL_UPDATED: now}
 
 
+async def upsert_product(product_name: str, price: float) -> dict[str, Any]:
+    """Insert a new product or update its price if it already exists.
+
+    Args:
+        product_name: Display name for the product.
+        price:        Starting / new price value.
+
+    Returns:
+        Dict with keys ``name``, ``price``, ``updated_at``.
+    """
+    now = _now_iso()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            f"""
+            INSERT INTO {TABLE} ({COL_NAME}, {COL_PRICE}, {COL_UPDATED})
+            VALUES (?, ?, ?)
+            ON CONFLICT({COL_NAME}) DO UPDATE
+              SET {COL_PRICE}   = excluded.{COL_PRICE},
+                  {COL_UPDATED} = excluded.{COL_UPDATED}
+            """,
+            (product_name, price, now),
+        )
+        await db.commit()
+    _log.debug("Upserted product %r → %.2f", product_name, price)
+    return {COL_NAME: product_name, COL_PRICE: price, COL_UPDATED: now}
+
+
 async def reset_to_seed() -> dict[str, Any]:
     """Reset the configured product to its seed price.
 
@@ -113,6 +153,17 @@ async def reset_to_seed() -> dict[str, Any]:
         Updated record dict.
     """
     return await update_price(PRODUCT_NAME, SEED_PRICE)
+
+
+async def list_products() -> list[dict[str, Any]]:
+    """Return all product records ordered by insertion id."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"SELECT {COL_NAME}, {COL_PRICE}, {COL_UPDATED} FROM {TABLE} ORDER BY {COL_ID}"
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

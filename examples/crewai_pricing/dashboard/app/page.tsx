@@ -7,6 +7,7 @@ import { ControlPanel } from "@/components/ControlPanel";
 import { DataLayer } from "@/components/DataLayer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EventLog } from "@/components/EventLog";
+import { ProductCatalog } from "@/components/ProductCatalog";
 import { useSSE } from "@/hooks/useSSE";
 
 export default function Page() {
@@ -39,7 +40,11 @@ export default function Page() {
         </div>
 
         <ErrorBoundary label="Control Panel">
-          <ControlPanel />
+          <ControlPanel state={state} />
+        </ErrorBoundary>
+
+        <ErrorBoundary label="Product Catalog">
+          <ProductCatalog products={state?.products ?? []} />
         </ErrorBoundary>
 
         <ErrorBoundary label="Event Log">

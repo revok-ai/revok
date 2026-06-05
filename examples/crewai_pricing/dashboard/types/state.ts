@@ -1,6 +1,16 @@
 export type ConfidenceStatus = "fresh" | "degraded" | "stale" | "unknown";
 export type EventKind = "memory" | "database" | "signal" | "agent" | "info";
 
+export interface ProductEntry {
+  name: string;
+  entity_key: string;
+  price: number;
+  updated_at: string | null;
+  confidence_score: number | null;
+  confidence_status: ConfidenceStatus;
+  signal_count: number;
+}
+
 export interface EventLogEntry {
   timestamp: string;
   message: string;
@@ -35,6 +45,8 @@ export interface DemoState {
   answer_without_revok: AgentAnswer | null;
   answer_with_revok: AgentAnswer | null;
   event_log: EventLogEntry[];
+  memory_loading: boolean;
+  products: ProductEntry[];
   services: {
     revok: boolean;
     mem0: boolean;
@@ -81,6 +93,8 @@ export function normalizeState(raw: Record<string, unknown>): DemoState {
     answer_without_revok: (raw.answer_without_revok as AgentAnswer | null) ?? null,
     answer_with_revok: (raw.answer_with_revok as AgentAnswer | null) ?? null,
     event_log,
+    memory_loading: Boolean(raw.memory_loading),
+    products: (raw.products as ProductEntry[] | undefined) ?? [],
     services: {
       revok: Boolean(services.revok),
       mem0: Boolean(services.mem0),

@@ -17,6 +17,7 @@ Two operating modes are supported:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -161,16 +162,18 @@ class PricingSalesAgent:
         session: aiohttp.ClientSession,
         product_name: str,
         price: float,
+        entity_key: str | None = None,
     ) -> dict[str, Any]:
         """Store a long-term memory: customer budget approved at current price.
 
-        The stored text deliberately contains the product name so that Revok's
-        entity pattern can match it on subsequent writes.
+        Pass ``entity_key`` when writing through the Revok proxy so that the
+        ``X-Revok-Entity`` header is sent and text matching is bypassed.
 
         Args:
             session:      Active aiohttp client session.
             product_name: Product name to embed in the memory.
             price:        Current price to record.
+            entity_key:   Revok entity key to tag the write with (optional).
 
         Returns:
             Mem0 response dict.
@@ -180,7 +183,7 @@ class PricingSalesAgent:
             "Verified pricing from database."
         )
         _log.info("[%s] Storing belief: %s", self.name, content)
-        return await self._add_memory(session, content)
+        return await self._add_memory(session, content, entity_key=entity_key)
 
     # ------------------------------------------------------------------
     # Main answer method
@@ -191,7 +194,7 @@ class PricingSalesAgent:
         session: aiohttp.ClientSession,
         product_name: str,
         entity_key: str | None,
-        question: str = "What is the current price for Redis Enterprise per month?",
+        question: str = "What is the current price for Orion Cache per month?",
     ) -> AgentAnswer:
         """Answer "Is *product_name* within the customer budget?"
 
@@ -256,10 +259,13 @@ class PricingSalesAgent:
                 signal_count=0,
             )
 
-        # WITH REVOK: only stale → re-verify from DB; degraded answers from memory with caveat
+        # WITH REVOK: degraded OR stale → re-verify from DB.  Both statuses
+        # indicate a signal arrived and confidence has dropped, so the agent
+        # should fetch the live price before answering rather than risk
+        # quoting a stale value.  Only ``fresh`` answers from memory directly.
         live_price: float | None = None
         re_verified = False
-        if status == "stale":
+        if status in ("degraded", "stale"):
             row = await self.get_current_price_tool(product_name)
             if row:
                 live_price = float(row[db_module.COL_PRICE])
@@ -292,7 +298,7 @@ class PricingSalesAgent:
         session: aiohttp.ClientSession,
         product_name: str,
         entity_key: str | None,
-        question: str = "What is the current price for Redis Enterprise per month?",
+        question: str = "What is the current price for Orion Cache per month?",
     ) -> AsyncIterator[dict[str, Any]]:
         """Streaming version of :meth:`answer_budget_question`.
 
@@ -371,7 +377,10 @@ class PricingSalesAgent:
         re_verified = False
         path = "memory"
 
-        if self.use_revok and status == "stale":
+        # Re-verify on degraded OR stale.  Both indicate a signal has reduced
+        # confidence; the agent should fetch the live price before answering
+        # rather than risk quoting a stale value.
+        if self.use_revok and status in ("degraded", "stale"):
             row = await self.get_current_price_tool(product_name)
             if row:
                 live_price = float(row[db_module.COL_PRICE])
@@ -383,8 +392,6 @@ class PricingSalesAgent:
                     "live_price": live_price,
                     "reason": status,
                 }
-        elif self.use_revok and status == "degraded":
-            path = "memory (caveat)"
 
         full_text: list[str] = []
         token_count = 0
@@ -435,7 +442,7 @@ class PricingSalesAgent:
         score: float | None,
         signal_count: int,
         live_price: float | None,
-        question: str = "What is the current price for Redis Enterprise per month?",
+        question: str = "What is the current price for Orion Cache per month?",
     ) -> tuple[str, str]:
         """Build ``(system, user)`` prompts for the LLM.
 
@@ -519,7 +526,7 @@ class PricingSalesAgent:
         score: float | None,
         signal_count: int,
         live_price: float | None,
-        question: str = "What is the current price for Redis Enterprise per month?",
+        question: str = "What is the current price for Orion Cache per month?",
     ) -> str:
         """Call the LLM to generate a natural-language answer (batch mode).
 
@@ -595,7 +602,7 @@ class PricingSalesAgent:
         score: float | None,
         signal_count: int,
         live_price: float | None,
-        question: str = "What is the current price for Redis Enterprise per month?",
+        question: str = "What is the current price for Orion Cache per month?",
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream LLM tokens via Azure OpenAI / OpenAI streaming API.
 
@@ -717,14 +724,19 @@ class PricingSalesAgent:
         session: aiohttp.ClientSession,
         content: str,
         role: str = "user",
+        entity_key: str | None = None,
     ) -> dict[str, Any]:
         payload = {
             "messages": [{"role": role, "content": content}],
             "user_id": self.user_id,
         }
+        extra_headers: dict[str, str] = {}
+        if entity_key:
+            extra_headers["X-Revok-Entity"] = entity_key
         async with session.post(
             f"{self.memory_base_url}/memories",
             json=payload,
+            headers=extra_headers if extra_headers else None,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as resp:
             resp.raise_for_status()
@@ -733,13 +745,16 @@ class PricingSalesAgent:
     async def _list_memories(
         self, session: aiohttp.ClientSession
     ) -> list[dict[str, Any]]:
-        async with session.get(
-            f"{self.memory_base_url}/memories",
-            params={"user_id": self.user_id},
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            resp.raise_for_status()
-            data = await resp.json()
+        try:
+            async with session.get(
+                f"{self.memory_base_url}/memories",
+                params={"user_id": self.user_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+        except (asyncio.TimeoutError, aiohttp.ClientError, Exception):
+            return []
         if isinstance(data, list):
             return data
         if isinstance(data, dict) and isinstance(data.get("results"), list):

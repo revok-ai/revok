@@ -13,15 +13,24 @@ interface AgentAnswerProps {
 }
 
 /** Returns the bottom notification for the With Revok panel.
- *  Only shows memory health after an answer exists; before that, neutral waiting state. */
+ *  Only shows memory health after an answer exists; before that, neutral waiting state.
+ *  When the agent re-verified against the live DB, prefer the "fetched live data"
+ *  message regardless of the original confidence status. */
 function memoryNotification(
   status: ConfidenceStatus,
   hasAnswer: boolean,
+  reVerified: boolean,
 ): { text: string; className: string } {
   if (!hasAnswer) {
     return {
       text: "Ask a question to see memory-verified answers",
       className: "bg-slate-500/10 text-slate-500 border-slate-500/30",
+    };
+  }
+  if (reVerified) {
+    return {
+      text: "Memory was stale — Revok fetched live data before answering ✅",
+      className: "bg-sky-500/15 text-sky-300 border-sky-500/40",
     };
   }
   switch (status) {
@@ -75,8 +84,16 @@ function TypewriterText({
 export function AgentAnswer({ state }: AgentAnswerProps) {
   const without = state?.answer_without_revok ?? null;
   const withRevok = state?.answer_with_revok ?? null;
-  const status: ConfidenceStatus = state?.confidence_status ?? "unknown";
-  const notification = memoryNotification(status, withRevok !== null);
+  // The notification reflects the memory health AT THE TIME OF THE ANSWER,
+  // not the current live status — otherwise the message changes spontaneously
+  // as the score decays in the background, even though the displayed text
+  // hasn't been re-fetched.  Fall back to live status only as a last resort
+  // (e.g. older snapshots that didn't carry confidence_status).
+  const status: ConfidenceStatus =
+    withRevok?.confidence_status ?? state?.confidence_status ?? "unknown";
+  const reVerified = Boolean(withRevok?.re_verified);
+  const notification = memoryNotification(status, withRevok !== null, reVerified);
+  // Without-Revok side never re-verifies, so the warning icon reflects raw status.
   const showWarningIcon = status === "degraded" || status === "stale";
 
   return (

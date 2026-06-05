@@ -70,10 +70,12 @@ export function DataLayer({ state }: DataLayerProps) {
           {dbPrice !== null ? `$${dbPrice.toFixed(0)}` : "—"}
           <span className="text-base font-normal text-slate-400 ml-1">/ month</span>
         </div>
-        <div className="text-sm text-slate-300">{product}</div>
-        <div className="text-xs text-slate-500">Last updated {updatedRel}</div>
+        <div className="text-sm text-slate-300 font-medium">{product}</div>
+        <div className="text-xs text-slate-500">
+          Current DB price · updated {updatedRel}
+        </div>
         <div className="pt-2 text-xs text-slate-500 italic">
-          In production: monitored by Azure Function
+          Tracks the product in the active question. See the catalog below for all products.
         </div>
       </CardContent>
     </Card>

@@ -13,12 +13,44 @@ upstream:
   write_paths:
     - "/memories"
 
+# ---------------------------------------------------------------------------
+# entity_matcher (alias catalog — optional when callers send X-Revok-Entity)
+# ---------------------------------------------------------------------------
+# The  X-Revok-Entity: <id>  request header always takes priority over text
+# matching.  The catalog below is the fallback and doubles as documentation
+# of every product id the demo uses.
 entity_matcher:
-  patterns:
-    - name: "redis_enterprise"
-      # Matches any text containing "Redis Enterprise" (e.g. budget approvals,
-      # pricing signals sent by the simulated Azure Function)
-      regex: "\\bRedis Enterprise\\b"
+  entities:
+    - id: "orion_cache"
+      display_name: "Orion Cache"
+      aliases:
+        - "Orion Cache"
+        - "orion-cache"
+        - "ORC-PRO"
+    - id: "nova_gateway"
+      display_name: "Nova Gateway"
+      aliases:
+        - "Nova Gateway"
+        - "nova-gateway"
+        - "NVG-STD"
+    - id: "atlas_search"
+      display_name: "Atlas Search"
+      aliases:
+        - "Atlas Search"
+        - "atlas-search"
+        - "ATS-ENT"
+    - id: "titan_queue"
+      display_name: "Titan Queue"
+      aliases:
+        - "Titan Queue"
+        - "titan-queue"
+        - "TTQ-PLUS"
+    - id: "spark_store"
+      display_name: "Spark Store"
+      aliases:
+        - "Spark Store"
+        - "spark-store"
+        - "SPK-OBJ"
 
 scoring:
   # half_life_seconds: time for confidence to decay to 0.5 after a signal
