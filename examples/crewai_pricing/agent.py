@@ -1,18 +1,25 @@
 """CrewAI sales agent for the Revok stale-memory pricing demo.
 
-The agent has two tools:
-- ``get_current_price_tool`` — reads live price from SQLite.
-- ``check_memory_tool``      — queries Mem0 (direct or via Revok proxy).
+Uses a proper CrewAI Crew / Agent / Task stack with BaseTool subclasses
+and LangChain LLMs (AzureChatOpenAI or ChatOpenAI).
 
 Provider auto-detection at startup:
 - Azure OpenAI when ``AZURE_OPENAI_API_KEY`` **and** ``AZURE_OPENAI_ENDPOINT`` are set.
 - Plain OpenAI otherwise (``OPENAI_API_KEY`` must be set).
 
 Two operating modes are supported:
-- **WITHOUT REVOK** (``use_revok=False``): answers confidently from memory,
-  ignores confidence score entirely.
-- **WITH REVOK** (``use_revok=True``): checks confidence before answering;
-  if ``degraded`` or ``stale`` re-verifies via ``get_current_price_tool``.
+- **WITHOUT REVOK** (``use_revok=False``): task tells the agent to answer
+  from memory without any re-verification requirement.
+- **WITH REVOK** (``use_revok=True``): Revok confidence is queried first;
+  the Task description is built dynamically:
+    fresh    → answer confidently from memory
+    degraded → answer from memory but add a caveat
+    stale    → MUST call ``get_current_price`` before answering
+
+Public method signatures are backward-compatible with ``server.py``.
+CrewAI handles all LLM calls; the ``session`` parameter is retained for
+``check_memory_tool`` / ``clear_memories`` / ``store_pricing_belief``
+which are called directly from ``server.py`` via aiohttp.
 """
 
 from __future__ import annotations
@@ -22,37 +29,56 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 import aiohttp
+from crewai import Agent, Crew, Process, Task
+from crewai.tools import BaseTool
+from langchain_core.callbacks.base import BaseCallbackHandler
+from langchain_openai import AzureChatOpenAI, ChatOpenAI
+from pydantic import BaseModel, Field, PrivateAttr
 
 import database as db_module
-
-
-def _llm_config() -> dict[str, str]:
-    """Return Azure OpenAI or plain OpenAI config from environment variables."""
-    az_key = os.getenv("AZURE_OPENAI_API_KEY", "")
-    az_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    if az_key and az_endpoint:
-        return {
-            "provider": "azure",
-            "api_key": az_key,
-            "endpoint": az_endpoint.rstrip("/"),
-            "deployment": os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini"),
-            "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
-        }
-    return {
-        "provider": "openai",
-        "api_key": os.getenv("OPENAI_API_KEY", ""),
-        "model": os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini"),
-    }
 
 _log = logging.getLogger(__name__)
 
 _PRICE_RE = re.compile(r"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)")
+
+
+# ---------------------------------------------------------------------------
+# LLM factory
+# ---------------------------------------------------------------------------
+
+
+def _build_llm(streaming: bool = False, callbacks: list | None = None) -> Any:
+    """Return AzureChatOpenAI or ChatOpenAI based on environment variables."""
+    az_key = os.getenv("AZURE_OPENAI_API_KEY", "")
+    az_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    kwargs: dict[str, Any] = {
+        "temperature": 0.3,
+        "max_tokens": 200,
+        "streaming": streaming,
+    }
+    if callbacks:
+        kwargs["callbacks"] = callbacks
+    if az_key and az_endpoint:
+        return AzureChatOpenAI(
+            azure_deployment=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini"),
+            azure_endpoint=az_endpoint.rstrip("/"),
+            api_key=az_key,
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+            **kwargs,
+        )
+    return ChatOpenAI(
+        model=os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini"),
+        api_key=os.getenv("OPENAI_API_KEY", ""),
+        **kwargs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -84,17 +110,165 @@ class AgentAnswer:
     live_price: float | None = field(default=None)
 
 
+# ---------------------------------------------------------------------------
+# Input schemas for CrewAI tools
+# ---------------------------------------------------------------------------
+
+
+class GetCurrentPriceInput(BaseModel):
+    product_name: str = Field(description="Exact product name to look up in the database")
+
+
+class CheckMemoryInput(BaseModel):
+    product_name: str = Field(description="Product name to search for in memory")
+
+
+# ---------------------------------------------------------------------------
+# CrewAI Tool: get_current_price
+# ---------------------------------------------------------------------------
+
+
+class GetCurrentPriceTool(BaseTool):
+    """Reads live price from SQLite — used when memory confidence is stale."""
+
+    name: str = "get_current_price"
+    description: str = (
+        "Get the current price of a product from the live pricing database. "
+        "Use this when you need to verify or re-check a price."
+    )
+    args_schema: type[BaseModel] = GetCurrentPriceInput
+    db_path: str = ""
+
+    _call_log: list[str] = PrivateAttr(default_factory=list)
+    _last_result: str = PrivateAttr(default="")
+
+    def _run(self, product_name: str) -> str:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute(
+                    f"SELECT {db_module.COL_NAME}, {db_module.COL_PRICE},"
+                    f" {db_module.COL_UPDATED}"
+                    f" FROM {db_module.TABLE} WHERE {db_module.COL_NAME} = ?",
+                    (product_name,),
+                )
+                row = cur.fetchone()
+            if row is None:
+                result = f"Product '{product_name}' not found in the database."
+            else:
+                result = (
+                    f"{row[db_module.COL_NAME]}: "
+                    f"${float(row[db_module.COL_PRICE]):.2f}/month "
+                    f"(last updated: {row[db_module.COL_UPDATED]})"
+                )
+        except Exception as exc:
+            _log.error("GetCurrentPriceTool error: %s", exc)
+            result = f"Error fetching price for '{product_name}': {exc}"
+        self._call_log.append(product_name)
+        self._last_result = result
+        return result
+
+
+# ---------------------------------------------------------------------------
+# CrewAI Tool: check_memory
+# ---------------------------------------------------------------------------
+
+
+class CheckMemoryTool(BaseTool):
+    """Queries Mem0 (through Revok proxy when configured) for stored memories."""
+
+    name: str = "check_memory"
+    description: str = (
+        "Check what the agent remembers about a product from past conversations. "
+        "Returns the memory content and its confidence score from Revok."
+    )
+    args_schema: type[BaseModel] = CheckMemoryInput
+    memory_base_url: str = ""
+    user_id: str = ""
+    revok_base_url: str | None = None
+
+    _call_log: list[str] = PrivateAttr(default_factory=list)
+    _last_result: str = PrivateAttr(default="")
+
+    def _run(self, product_name: str) -> str:
+        try:
+            params = urllib.parse.urlencode({"user_id": self.user_id})
+            url = f"{self.memory_base_url}/memories?{params}"
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            memories: list[dict] = (
+                data if isinstance(data, list) else data.get("results", [])
+            )
+        except Exception as exc:
+            _log.error("CheckMemoryTool list_memories error: %s", exc)
+            result = f"Could not retrieve memories: {exc}"
+            self._call_log.append(product_name)
+            self._last_result = result
+            return result
+
+        sorted_mems = sorted(
+            memories,
+            key=lambda m: m.get("updated_at") or m.get("created_at") or "",
+            reverse=True,
+        )
+        keyword = product_name.lower()
+        memory_text = ""
+        for item in sorted_mems:
+            text = _extract_text(item)
+            if keyword in text.lower() and "$" in text:
+                memory_text = text
+                break
+        if not memory_text:
+            for item in sorted_mems:
+                text = _extract_text(item)
+                if keyword in text.lower():
+                    memory_text = text
+                    break
+
+        if not memory_text:
+            result = f"No memory found for '{product_name}'. Please load memory first."
+            self._call_log.append(product_name)
+            self._last_result = result
+            return result
+
+        # Extract Revok metadata written by the proxy (optional enrichment)
+        revok_score: float | None = None
+        revok_status: str | None = None
+        for item in sorted_mems:
+            text = _extract_text(item)
+            if keyword in text.lower():
+                meta = item.get("metadata") or {}
+                x_revok = meta.get("x_revok") or {}
+                if x_revok:
+                    revok_score = x_revok.get("score")
+                    revok_status = x_revok.get("status")
+                break
+
+        result = f"Memory for {product_name}: {memory_text}"
+        if revok_score is not None:
+            result += f" | Revok confidence: {revok_score:.2f} ({revok_status or 'unknown'})"
+        self._call_log.append(product_name)
+        self._last_result = result
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Main agent class
+# ---------------------------------------------------------------------------
+
+
 class PricingSalesAgent:
-    """Sales agent backed by Mem0 memory; optionally confidence-aware via Revok.
+    """Sales agent backed by Mem0 memory; uses a proper CrewAI Crew for reasoning.
 
     Two instances are created in the demo:
 
     1. **Without Revok** — ``memory_base_url`` points directly at Mem0,
-       ``use_revok=False``.  The agent answers confidently from memory.
+       ``use_revok=False``.  Task tells the agent to answer from memory.
 
     2. **With Revok** — ``memory_base_url`` points at the Revok proxy so
-       that all memory writes are enriched, ``use_revok=True``.  The agent
-       checks confidence and re-verifies stale beliefs from the live DB.
+       that memory writes are enriched, ``use_revok=True``.  Task description
+       is built dynamically based on Revok confidence:
+       fresh → trust memory; stale → must call ``get_current_price``.
     """
 
     def __init__(
@@ -106,15 +280,6 @@ class PricingSalesAgent:
         revok_base_url: str | None,
         use_revok: bool,
     ) -> None:
-        """Initialise the agent.
-
-        Args:
-            name:             Human-readable label used in logs and the UI.
-            user_id:          Mem0 namespace for this agent's memories.
-            memory_base_url:  Base URL for memory reads/writes.
-            revok_base_url:   Base URL for Revok entity API; ``None`` when Revok is unused.
-            use_revok:        Enable confidence-aware answering.
-        """
         self.name = name
         self.user_id = user_id
         self.memory_base_url = memory_base_url.rstrip("/")
@@ -122,71 +287,146 @@ class PricingSalesAgent:
         self.use_revok = use_revok
 
     # ------------------------------------------------------------------
-    # Tool 1: get_current_price
+    # Tool factories (fresh instances per crew run so _call_log is clean)
     # ------------------------------------------------------------------
 
-    async def get_current_price_tool(self, product_name: str) -> dict[str, Any] | None:
-        """Tool: read the current price for *product_name* from the SQLite database.
+    def _make_price_tool(self) -> GetCurrentPriceTool:
+        return GetCurrentPriceTool(db_path=db_module.DB_PATH)
 
-        Args:
-            product_name: Exact product name to look up.
-
-        Returns:
-            Row dict with ``name``, ``price``, ``updated_at``, or ``None`` if not found.
-        """
-        return await db_module.get_price(product_name)
-
-    # ------------------------------------------------------------------
-    # Tool 2: check_memory
-    # ------------------------------------------------------------------
-
-    async def check_memory_tool(
-        self, session: aiohttp.ClientSession
-    ) -> list[dict[str, Any]]:
-        """Tool: query Mem0 (through the agent's configured base URL) for stored memories.
-
-        Args:
-            session: Active aiohttp client session.
-
-        Returns:
-            List of memory dicts from Mem0.
-        """
-        return await self._list_memories(session)
-
-    # ------------------------------------------------------------------
-    # Memory helpers
-    # ------------------------------------------------------------------
-
-    async def store_pricing_belief(
-        self,
-        session: aiohttp.ClientSession,
-        product_name: str,
-        price: float,
-        entity_key: str | None = None,
-    ) -> dict[str, Any]:
-        """Store a long-term memory: customer budget approved at current price.
-
-        Pass ``entity_key`` when writing through the Revok proxy so that the
-        ``X-Revok-Entity`` header is sent and text matching is bypassed.
-
-        Args:
-            session:      Active aiohttp client session.
-            product_name: Product name to embed in the memory.
-            price:        Current price to record.
-            entity_key:   Revok entity key to tag the write with (optional).
-
-        Returns:
-            Mem0 response dict.
-        """
-        content = (
-            f"Customer budget approved {product_name} at ${price:.0f}/month. "
-            "Verified pricing from database."
+    def _make_memory_tool(self) -> CheckMemoryTool:
+        return CheckMemoryTool(
+            memory_base_url=self.memory_base_url,
+            user_id=self.user_id,
+            revok_base_url=self.revok_base_url,
         )
-        _log.info("[%s] Storing belief: %s", self.name, content)
-        return await self._add_memory(session, content, entity_key=entity_key)
 
     # ------------------------------------------------------------------
-    # Main answer method
+    # Task description builder
+    # ------------------------------------------------------------------
+
+    def _build_task_description(
+        self,
+        product_name: str,
+        status: str,
+        score: float | None,
+        signal_count: int,
+        question: str = "",
+    ) -> str:
+        score_str = f"{score:.2f}" if score is not None else "N/A"
+        q = question or f"What is the current price for {product_name} per month?"
+        if not self.use_revok:
+            return (
+                f"Answer this question using your memory: Is {product_name} within "
+                f"the customer budget? Use check_memory to recall what you know. "
+                f"Answer confidently from what you remember. "
+                f'Customer question: "{q}"'
+            )
+        if status == "stale":
+            return (
+                f"Answer this question: Is {product_name} within the customer budget? "
+                f"Your memory confidence is {score_str} (STALE). "
+                f"You must use get_current_price to get the live price before answering. "
+                f"Do not use your memory for the price. "
+                f'Customer question: "{q}"'
+            )
+        if status == "degraded":
+            return (
+                f"Answer this question: Is {product_name} within the customer budget? "
+                f"Check your memory first. Your memory confidence is {score_str} "
+                f"(DEGRADED) — add a caveat that verification is recommended. "
+                f'Customer question: "{q}"'
+            )
+        return (
+            f"Answer this question: Is {product_name} within the customer budget? "
+            f"Check your memory first. Your memory confidence is {score_str} (FRESH) — "
+            f"you can trust it. "
+            f'Customer question: "{q}"'
+        )
+
+    # ------------------------------------------------------------------
+    # Crew factory
+    # ------------------------------------------------------------------
+
+    def _build_crew(
+        self,
+        product_name: str,
+        status: str,
+        score: float | None,
+        signal_count: int,
+        *,
+        price_tool: GetCurrentPriceTool,
+        memory_tool: CheckMemoryTool,
+        llm: Any = None,
+        step_callback: Any = None,
+        question: str = "",
+    ) -> Crew:
+        pricing_advisor = Agent(
+            role="Pricing Sales Advisor",
+            goal=(
+                "Provide accurate pricing recommendations based on current market data "
+                "and customer budget constraints"
+            ),
+            backstory=(
+                "You are an experienced sales advisor who helps customers make informed "
+                "purchasing decisions. You always verify information before making "
+                "recommendations, especially when dealing with time-sensitive pricing data."
+            ),
+            tools=[price_tool, memory_tool],
+            llm=llm or _build_llm(),
+            verbose=False,
+            allow_delegation=False,
+        )
+        budget_task = Task(
+            description=self._build_task_description(
+                product_name, status, score, signal_count, question=question
+            ),
+            expected_output=(
+                "A clear pricing recommendation with confidence level and any caveats "
+                "about data freshness"
+            ),
+            agent=pricing_advisor,
+        )
+        crew_kwargs: dict[str, Any] = {
+            "agents": [pricing_advisor],
+            "tasks": [budget_task],
+            "process": Process.sequential,
+            "verbose": False,
+        }
+        if step_callback is not None:
+            crew_kwargs["step_callback"] = step_callback
+        return Crew(**crew_kwargs)
+
+    # ------------------------------------------------------------------
+    # Revok confidence helper
+    # ------------------------------------------------------------------
+
+    async def _get_revok_confidence(
+        self, entity_key: str
+    ) -> tuple[float | None, int, str]:
+        """Query Revok entity. Returns (score, signal_count, status)."""
+        if not self.revok_base_url:
+            return None, 0, "unknown"
+        encoded = urllib.parse.quote(entity_key, safe="")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.revok_base_url}/v1/entities/{encoded}",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 404:
+                        return None, 0, "unknown"
+                    resp.raise_for_status()
+                    entity = await resp.json()
+            score = float(entity["score"])
+            signal_count = int(entity["signal_count"])
+            status = _score_to_status(score)
+            return score, signal_count, status
+        except Exception as exc:
+            _log.warning("[%s] Revok confidence check failed: %s", self.name, exc)
+            return None, 0, "unknown"
+
+    # ------------------------------------------------------------------
+    # Public: batch answer  (backward-compatible signature)
     # ------------------------------------------------------------------
 
     async def answer_budget_question(
@@ -196,95 +436,46 @@ class PricingSalesAgent:
         entity_key: str | None,
         question: str = "What is the current price for Orion Cache per month?",
     ) -> AgentAnswer:
-        """Answer "Is *product_name* within the customer budget?"
+        """Run the CrewAI pricing crew and return a structured answer.
 
-        WITHOUT REVOK: answers confidently from memory, ignores confidence.
-        WITH REVOK:    checks confidence; if degraded/stale calls
-                       ``get_current_price_tool`` to re-verify before answering.
-
-        Args:
-            session:      Active aiohttp client session.
-            product_name: Product to look up in memory and (if needed) the DB.
-            entity_key:   Revok entity key to query for confidence score.
-                          ``None`` disables confidence checking.
-
-        Returns:
-            :class:`AgentAnswer` with answer text and metadata.
+        ``session`` is retained for backward compatibility with ``server.py``;
+        CrewAI tools make their own HTTP/SQLite calls internally.
+        Revok confidence is queried via a fresh aiohttp session before the
+        crew runs so the Task description can be confidence-aware.
         """
-        # Tool 2: check memory
-        memories = await self.check_memory_tool(session)
-        memory_quote = self._find_pricing_memory(memories, product_name)
-
         score: float | None = None
-        signal_count: int = 0
-        status: str = "unknown"
+        signal_count = 0
+        status = "unknown"
 
         if self.use_revok and entity_key:
-            entity = await self._get_revok_entity(session, entity_key)
-            if entity:
-                score = float(entity["score"])
-                signal_count = int(entity["signal_count"])
-                status = _score_to_status(score)
+            score, signal_count, status = await self._get_revok_confidence(entity_key)
 
-        if not memory_quote:
-            return AgentAnswer(
-                answer=(
-                    f"I don't have pricing information for {product_name} in memory yet. "
-                    "Please load memory first."
-                ),
-                memory_quote="",
-                confidence_score=score,
-                confidence_status=status,
-                signal_count=signal_count,
-            )
-
-        # WITHOUT REVOK: answer from memory only — no confidence check, no DB call
-        if not self.use_revok:
-            answer = await self._llm_answer(
-                session,
-                product_name=product_name,
-                memory_quote=memory_quote,
-                use_revok=False,
-                status="unknown",
-                score=None,
-                signal_count=0,
-                live_price=None,
-                question=question,
-            )
-            return AgentAnswer(
-                answer=answer,
-                memory_quote=memory_quote,
-                confidence_score=None,
-                confidence_status="unknown",
-                signal_count=0,
-            )
-
-        # WITH REVOK: degraded OR stale → re-verify from DB.  Both statuses
-        # indicate a signal arrived and confidence has dropped, so the agent
-        # should fetch the live price before answering rather than risk
-        # quoting a stale value.  Only ``fresh`` answers from memory directly.
-        live_price: float | None = None
-        re_verified = False
-        if status in ("degraded", "stale"):
-            row = await self.get_current_price_tool(product_name)
-            if row:
-                live_price = float(row[db_module.COL_PRICE])
-                re_verified = True
-
-        # WITH REVOK: ask LLM with full context (memory + confidence + live price if re-verified)
-        answer = await self._llm_answer(
-            session,
-            product_name=product_name,
-            memory_quote=memory_quote,
-            use_revok=True,
-            status=status,
-            score=score,
-            signal_count=signal_count,
-            live_price=live_price,
+        price_tool = self._make_price_tool()
+        memory_tool = self._make_memory_tool()
+        crew = self._build_crew(
+            product_name,
+            status,
+            score,
+            signal_count,
+            price_tool=price_tool,
+            memory_tool=memory_tool,
             question=question,
         )
+
+        result = await asyncio.to_thread(crew.kickoff)
+        answer_text = result.raw if hasattr(result, "raw") else str(result)
+
+        re_verified = bool(price_tool._call_log)
+        memory_quote = memory_tool._last_result
+
+        live_price: float | None = None
+        if re_verified and price_tool._last_result:
+            matches = _PRICE_RE.findall(price_tool._last_result)
+            if matches:
+                live_price = float(matches[-1].replace(",", ""))
+
         return AgentAnswer(
-            answer=answer,
+            answer=answer_text,
             memory_quote=memory_quote,
             confidence_score=score,
             confidence_status=status,
@@ -300,47 +491,29 @@ class PricingSalesAgent:
         entity_key: str | None,
         question: str = "What is the current price for Orion Cache per month?",
     ) -> AsyncIterator[dict[str, Any]]:
-        """Streaming version of :meth:`answer_budget_question`.
+        """Stream typed event dicts as the CrewAI crew runs.
 
-        Yields typed event dicts consumed by the ``/stream/ask-agent`` SSE
-        endpoint.  Event types emitted (in order):
+        Event types emitted (same structure as previous implementation):
+        ``agent_started`` / ``confidence_checked`` / ``memory_loaded`` /
+        ``db_reverified`` / ``token`` / ``agent_finished``.
 
-        * ``agent_started``
-        * ``memory_loaded``
-        * ``confidence_checked`` (WITH Revok only)
-        * ``db_reverified`` (WITH Revok, degraded/stale only)
-        * ``token`` — one dict per LLM text chunk
-        * ``agent_finished`` — includes latency_ms, llm_tokens, path, answer
-
-        Args:
-            session:      Active aiohttp client session.
-            product_name: Product to look up.
-            entity_key:   Revok entity key; ``None`` disables confidence checking.
+        Token events arrive from the LangChain streaming callback while the
+        crew's LLM is generating.  Tool-call events are emitted via
+        step_callback during tool execution and, as a fallback, post-run
+        from ``_call_log`` if the callback did not fire (CrewAI version
+        differences).
         """
         start = time.monotonic()
         agent_id = "with_revok" if self.use_revok else "without_revok"
 
         yield {"type": "agent_started", "agent": agent_id}
 
-        memories = await self.check_memory_tool(session)
-        memory_quote = self._find_pricing_memory(memories, product_name)
-        yield {
-            "type": "memory_loaded",
-            "agent": agent_id,
-            "memory_quote": memory_quote,
-            "memory_count": len(memories),
-        }
-
         score: float | None = None
-        signal_count: int = 0
-        status: str = "unknown"
+        signal_count = 0
+        status = "unknown"
 
         if self.use_revok and entity_key:
-            entity = await self._get_revok_entity(session, entity_key)
-            if entity:
-                score = float(entity["score"])
-                signal_count = int(entity["signal_count"])
-                status = _score_to_status(score)
+            score, signal_count, status = await self._get_revok_confidence(entity_key)
             yield {
                 "type": "confidence_checked",
                 "agent": agent_id,
@@ -349,77 +522,150 @@ class PricingSalesAgent:
                 "signal_count": signal_count,
             }
 
-        if not memory_quote:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            msg = (
-                f"I don't have pricing information for {product_name} in memory yet. "
-                "Please load memory first."
-            )
-            for ch in msg:
-                yield {"type": "token", "agent": agent_id, "text": ch}
-            yield {
-                "type": "agent_finished",
-                "agent": agent_id,
-                "latency_ms": latency_ms,
-                "llm_tokens": 0,
-                "path": "no_memory",
-                "memory_quote": "",
-                "re_verified": False,
-                "live_price": None,
-                "confidence_status": status,
-                "confidence_score": score,
-                "signal_count": signal_count,
-                "answer": msg,
-            }
-            return
+        # ── Inter-thread communication ────────────────────────────────
+        queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        _SENTINEL = object()
 
-        live_price: float | None = None
-        re_verified = False
-        path = "memory"
+        token_count = [0]
+        emitted: dict[str, bool] = {}
 
-        # Re-verify on degraded OR stale.  Both indicate a signal has reduced
-        # confidence; the agent should fetch the live price before answering
-        # rather than risk quoting a stale value.
-        if self.use_revok and status in ("degraded", "stale"):
-            row = await self.get_current_price_tool(product_name)
-            if row:
-                live_price = float(row[db_module.COL_PRICE])
-                re_verified = True
-                path = "memory\u2192reverify"
-                yield {
-                    "type": "db_reverified",
-                    "agent": agent_id,
-                    "live_price": live_price,
-                    "reason": status,
-                }
+        # ── LangChain streaming callback — fires in the worker thread ─
+        class _TokenHandler(BaseCallbackHandler):
+            def on_llm_new_token(self_h, token: str, **kwargs: Any) -> None:
+                token_count[0] += 1
+                asyncio.run_coroutine_threadsafe(
+                    queue.put({"type": "token", "agent": agent_id, "text": token}),
+                    loop,
+                )
 
-        full_text: list[str] = []
-        token_count = 0
-        async for tok_evt in self._llm_answer_streaming(
-            session,
-            product_name=product_name,
-            memory_quote=memory_quote,
-            use_revok=self.use_revok,
-            status=status,
-            score=score,
-            signal_count=signal_count,
-            live_price=live_price,
+        # ── CrewAI step callback — fires after each tool returns ──────
+        def _step_callback(step_output: Any) -> None:
+            try:
+                if isinstance(step_output, tuple) and len(step_output) == 2:
+                    action, observation = step_output
+                    tool_name: str = getattr(action, "tool", "") or ""
+                    obs: str = str(observation) if observation else ""
+                else:
+                    tool_name = (
+                        getattr(step_output, "tool", "")
+                        or getattr(step_output, "name", "")
+                        or ""
+                    )
+                    obs = (
+                        getattr(step_output, "result", "")
+                        or getattr(step_output, "output", "")
+                        or ""
+                    )
+                if tool_name == "check_memory":
+                    emitted["memory_loaded"] = True
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(
+                            {
+                                "type": "memory_loaded",
+                                "agent": agent_id,
+                                "memory_quote": obs,
+                                "memory_count": 1,
+                            }
+                        ),
+                        loop,
+                    )
+                elif tool_name == "get_current_price":
+                    price_matches = _PRICE_RE.findall(obs)
+                    live_p = (
+                        float(price_matches[-1].replace(",", ""))
+                        if price_matches
+                        else None
+                    )
+                    emitted["db_reverified"] = True
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(
+                            {
+                                "type": "db_reverified",
+                                "agent": agent_id,
+                                "live_price": live_p,
+                                "reason": status,
+                            }
+                        ),
+                        loop,
+                    )
+            except Exception as exc:
+                _log.debug("[%s] step_callback parse error: %s", self.name, exc)
+
+        # ── Build and run the crew in a worker thread ─────────────────
+        price_tool = self._make_price_tool()
+        memory_tool = self._make_memory_tool()
+        streaming_llm = _build_llm(streaming=True, callbacks=[_TokenHandler()])
+
+        crew = self._build_crew(
+            product_name,
+            status,
+            score,
+            signal_count,
+            price_tool=price_tool,
+            memory_tool=memory_tool,
+            llm=streaming_llm,
+            step_callback=_step_callback,
             question=question,
-        ):
-            if tok_evt["type"] == "token":
-                full_text.append(tok_evt["text"])
-                yield {"type": "token", "agent": agent_id, "text": tok_evt["text"]}
-            elif tok_evt["type"] == "llm_done":
-                token_count = tok_evt.get("token_count", len(full_text))
+        )
 
-        answer_text = "".join(full_text)
+        def _sync_run() -> Any:
+            res = crew.kickoff()
+            asyncio.run_coroutine_threadsafe(queue.put(_SENTINEL), loop)
+            return res
+
+        crew_task: asyncio.Task[Any] = asyncio.create_task(
+            asyncio.to_thread(_sync_run)
+        )
+
+        # ── Drain queue until sentinel ────────────────────────────────
+        while True:
+            item = await queue.get()
+            if item is _SENTINEL:
+                break
+            yield item  # type: ignore[misc]
+
+        result = await crew_task
+        answer_text = result.raw if hasattr(result, "raw") else str(result)
+
+        # ── Fallback: emit tool events if step_callback did not fire ──
+        if not emitted.get("memory_loaded") and memory_tool._call_log:
+            yield {
+                "type": "memory_loaded",
+                "agent": agent_id,
+                "memory_quote": memory_tool._last_result,
+                "memory_count": 1,
+            }
+
+        re_verified = bool(price_tool._call_log)
+        live_price: float | None = None
+        if re_verified and price_tool._last_result:
+            matches_live = _PRICE_RE.findall(price_tool._last_result)
+            if matches_live:
+                live_price = float(matches_live[-1].replace(",", ""))
+
+        if not emitted.get("db_reverified") and re_verified:
+            yield {
+                "type": "db_reverified",
+                "agent": agent_id,
+                "live_price": live_price,
+                "reason": status,
+            }
+
+        # ── Fallback token emission if LangChain streaming did not work
+        if token_count[0] == 0:
+            for ch in answer_text:
+                yield {"type": "token", "agent": agent_id, "text": ch}
+            token_count[0] = len(answer_text)
+
+        memory_quote = memory_tool._last_result
         latency_ms = int((time.monotonic() - start) * 1000)
         yield {
             "type": "agent_finished",
             "agent": agent_id,
             "latency_ms": latency_ms,
-            "llm_tokens": token_count,
-            "path": path,
+            "llm_tokens": token_count[0],
+            "path": "memory\u2192reverify" if re_verified else "memory",
             "memory_quote": memory_quote,
             "re_verified": re_verified,
             "live_price": live_price,
@@ -430,262 +676,29 @@ class PricingSalesAgent:
         }
 
     # ------------------------------------------------------------------
-    # LLM answer generation
+    # Compatibility methods called directly by server.py
     # ------------------------------------------------------------------
 
-    def _build_prompts(
-        self,
-        product_name: str,
-        memory_quote: str,
-        use_revok: bool,
-        status: str,
-        score: float | None,
-        signal_count: int,
-        live_price: float | None,
-        question: str = "What is the current price for Orion Cache per month?",
-    ) -> tuple[str, str]:
-        """Build ``(system, user)`` prompts for the LLM.
+    async def check_memory_tool(
+        self, session: aiohttp.ClientSession
+    ) -> list[dict[str, Any]]:
+        """List raw memories for this agent's ``user_id``. Used by ``/memories``."""
+        return await self._list_memories(session)
 
-        Extracted so both the batch ``_llm_answer`` and the streaming
-        ``_llm_answer_streaming`` use identical prompts.
-
-        Returns:
-            Tuple of *(system_prompt, user_prompt)*.
-        """
-        if use_revok:
-            if live_price is not None:
-                # Stale path: memory was stale, re-verified from live DB
-                system = (
-                    "You are a confidence-aware sales agent. Your memory layer tracks "
-                    "how fresh your stored knowledge is. When memory confidence is too low, "
-                    "you always re-verify from the live database before answering. "
-                    "Be concise (2-3 sentences). Mention that you re-verified and use "
-                    "the live price in your answer."
-                )
-                user = (
-                    f"The customer is asking about {product_name}.\n"
-                    f"Customer question: \"{question}\"\n"
-                    f"Your stored memory: \"{memory_quote}\"\n"
-                    f"Memory confidence: {status} (score={score:.2f}, signals={signal_count})\n"
-                    f"You re-verified via the live database: current price is ${live_price:.0f}/month.\n"
-                    f"Answer the customer's question using the re-verified price."
-                )
-            elif status == "degraded":
-                # Degraded path: answer from memory but add explicit caveat
-                score_str = f"{score:.2f}" if score is not None else "N/A"
-                system = (
-                    "You are a confidence-aware sales agent. Your memory layer tracks "
-                    "how fresh your stored knowledge is. When confidence is degraded, "
-                    "answer from memory but explicitly tell the customer the information "
-                    "may need verification before acting on it. Be concise (2-3 sentences)."
-                )
-                user = (
-                    f"The customer is asking about {product_name}.\n"
-                    f"Customer question: \"{question}\"\n"
-                    f"Your stored memory: \"{memory_quote}\"\n"
-                    f"Memory confidence: degraded (score={score_str}, signals={signal_count})\n"
-                    f"Answer from memory but include a caveat that this information may need verification."
-                )
-            else:
-                # Fresh path: answer confidently from memory
-                score_str = f"{score:.2f}" if score is not None else "N/A"
-                system = (
-                    "You are a confidence-aware sales agent. Your memory layer tracks "
-                    "how fresh your stored knowledge is. Confidence is high — answer "
-                    "confidently from memory. Be concise (2-3 sentences)."
-                )
-                user = (
-                    f"The customer is asking about {product_name}.\n"
-                    f"Customer question: \"{question}\"\n"
-                    f"Your stored memory: \"{memory_quote}\"\n"
-                    f"Memory confidence: fresh (score={score_str}, signals={signal_count})\n"
-                    f"Answer the customer's question confidently from memory."
-                )
-        else:
-            system = (
-                "You are a sales agent. You answer customer questions using only "
-                "the information stored in your memory. You have no way to verify "
-                "if your memory is current. Be concise (2-3 sentences) and confident."
-            )
-            user = (
-                f"The customer is asking about {product_name}.\n"
-                f"Customer question: \"{question}\"\n"
-                f"Your stored memory: \"{memory_quote}\"\n"
-                f"Answer the customer's question from memory."
-            )
-        return system, user
-
-    async def _llm_answer(
+    async def store_pricing_belief(
         self,
         session: aiohttp.ClientSession,
-        *,
         product_name: str,
-        memory_quote: str,
-        use_revok: bool,
-        status: str,
-        score: float | None,
-        signal_count: int,
-        live_price: float | None,
-        question: str = "What is the current price for Orion Cache per month?",
-    ) -> str:
-        """Call the LLM to generate a natural-language answer (batch mode).
-
-        Used by the non-streaming ``/actions/ask-agent`` endpoint.
-        Prompt construction is shared with ``_llm_answer_streaming`` via
-        :meth:`_build_prompts`.
-        """
-        system, user = self._build_prompts(
-            product_name, memory_quote, use_revok, status, score, signal_count, live_price,
-            question=question,
+        price: float,
+        entity_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Store a pricing memory via Mem0/Revok. Used by ``_heal_pricing_memory``."""
+        content = (
+            f"Customer budget approved {product_name} at ${price:.0f}/month. "
+            "Verified pricing from database."
         )
-
-        cfg = _llm_config()
-        try:
-            if cfg["provider"] == "azure":
-                url = (
-                    f"{cfg['endpoint']}/openai/deployments/{cfg['deployment']}"
-                    f"/chat/completions?api-version={cfg['api_version']}"
-                )
-                headers = {
-                    "Content-Type": "application/json",
-                    "api-key": cfg["api_key"],
-                }
-            else:
-                url = "https://api.openai.com/v1/chat/completions"
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {cfg['api_key']}",
-                }
-            payload: dict[str, Any] = {
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": 0.3,
-                "max_tokens": 200,
-            }
-            if cfg["provider"] == "openai":
-                payload["model"] = cfg["model"]
-
-            async with session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                return data["choices"][0]["message"]["content"].strip()
-        except Exception as exc:
-            _log.error("[%s] LLM call failed: %s", self.name, exc)
-            price_str = self._extract_price(memory_quote) or "an approved amount"
-            if live_price is not None:
-                return (
-                    f"[LLM unavailable] Memory said {price_str} but confidence was stale. "
-                    f"Re-verified: current price is ${live_price:.0f}/month."
-                )
-            if status == "degraded":
-                return (
-                    f"[LLM unavailable] Based on memory: {product_name} is approved at {price_str}. "
-                    "(Note: confidence is degraded — this information may need verification.)"
-                )
-            return f"[LLM unavailable] Based on memory: {product_name} is approved at {price_str}."
-
-    async def _llm_answer_streaming(
-        self,
-        session: aiohttp.ClientSession,
-        *,
-        product_name: str,
-        memory_quote: str,
-        use_revok: bool,
-        status: str,
-        score: float | None,
-        signal_count: int,
-        live_price: float | None,
-        question: str = "What is the current price for Orion Cache per month?",
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Stream LLM tokens via Azure OpenAI / OpenAI streaming API.
-
-        Yields ``{"type": "token", "text": "..."}`` dicts as each chunk
-        arrives, followed by ``{"type": "llm_done", "token_count": N}``.
-        Falls back to emitting the whole fallback string as tokens on error.
-        """
-        system, user = self._build_prompts(
-            product_name, memory_quote, use_revok, status, score, signal_count, live_price,
-            question=question,
-        )
-
-        cfg = _llm_config()
-        if cfg["provider"] == "azure":
-            url = (
-                f"{cfg['endpoint']}/openai/deployments/{cfg['deployment']}"
-                f"/chat/completions?api-version={cfg['api_version']}"
-            )
-            headers = {"Content-Type": "application/json", "api-key": cfg["api_key"]}
-        else:
-            url = "https://api.openai.com/v1/chat/completions"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {cfg['api_key']}",
-            }
-
-        payload: dict[str, Any] = {
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 200,
-            "stream": True,
-        }
-        if cfg["provider"] == "openai":
-            payload["model"] = cfg["model"]
-
-        token_count = 0
-        try:
-            async with session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
-                resp.raise_for_status()
-                async for raw_line in resp.content:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        text = chunk["choices"][0]["delta"].get("content", "")
-                        if text:
-                            token_count += 1
-                            yield {"type": "token", "text": text}
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        pass
-        except Exception as exc:
-            _log.error("[%s] LLM streaming failed: %s", self.name, exc)
-            price_str = self._extract_price(memory_quote) or "an approved amount"
-            if live_price is not None:
-                fallback = (
-                    f"[LLM unavailable] Memory said {price_str} but confidence was stale. "
-                    f"Re-verified: current price is ${live_price:.0f}/month."
-                )
-            elif status == "degraded":
-                fallback = (
-                    f"[LLM unavailable] Based on memory: {product_name} is approved at {price_str}. "
-                    "(Note: confidence is degraded — this information may need verification.)"
-                )
-            else:
-                fallback = (
-                    f"[LLM unavailable] Based on memory: {product_name} is approved at {price_str}."
-                )
-            for ch in fallback:
-                token_count += 1
-                yield {"type": "token", "text": ch}
-        yield {"type": "llm_done", "token_count": token_count}
+        _log.info("[%s] Storing belief: %s", self.name, content)
+        return await self._add_memory(session, content, entity_key=entity_key)
 
     # ------------------------------------------------------------------
     # Memory clearing (used by reset)
@@ -753,7 +766,7 @@ class PricingSalesAgent:
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
-        except (asyncio.TimeoutError, aiohttp.ClientError, Exception):
+        except Exception:
             return []
         if isinstance(data, list):
             return data
