@@ -1,0 +1,37 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# --- Install the revok package (mirrors Dockerfile.revok) -----------------
+COPY pyproject.toml ./
+COPY revok/ ./revok/
+
+# --- Install demo + revok runtime dependencies ----------------------------
+RUN pip install --no-cache-dir \
+    "aiohttp>=3.9,<4" \
+    "aiosqlite>=0.20,<1" \
+    "networkx>=3.2,<4" \
+    "pyyaml>=6.0,<7" \
+    "fastapi>=0.110,<1" \
+    "uvicorn[standard]>=0.27,<1" \
+    "python-dotenv>=1.0,<2" \
+    "pydantic>=2.5,<3" \
+    "openai>=1.30,<2" \
+    "langgraph>=0.2,<1" \
+    "langchain>=0.3,<1" \
+    "langchain-openai>=0.3,<1" \
+    "langchain-core>=0.3,<1"
+
+# --- Demo app sources -----------------------------------------------------
+COPY examples/langgraph_pricing/server.py ./
+COPY examples/langgraph_pricing/agent.py ./
+COPY examples/langgraph_pricing/database.py ./
+COPY examples/langgraph_pricing/demo_state.py ./
+COPY examples/langgraph_pricing/calculator.html ./
+
+ENV PYTHONPATH=/app \
+    DEMO_PORT=8081
+
+EXPOSE 8081
+
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8081"]

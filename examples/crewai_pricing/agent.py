@@ -314,11 +314,17 @@ class PricingSalesAgent:
     ) -> str:
         score_str = f"{score:.2f}" if score is not None else "N/A"
         q = question or f"What is the current price for {product_name} per month?"
+        no_guess_rule = (
+            "IMPORTANT: If check_memory returns 'No memory found', do NOT guess or "
+            "invent a price. Tell the customer you have no pricing information yet "
+            "and that they should try again after pricing data has been loaded. "
+        )
         if not self.use_revok:
             return (
                 f"Answer this question using your memory: Is {product_name} within "
                 f"the customer budget? Use check_memory to recall what you know. "
-                f"Answer confidently from what you remember. "
+                f"Answer confidently from what you remember only if memory exists. "
+                f"{no_guess_rule}"
                 f'Customer question: "{q}"'
             )
         if status == "stale":
@@ -327,6 +333,7 @@ class PricingSalesAgent:
                 f"Your memory confidence is {score_str} (STALE). "
                 f"You must use get_current_price to get the live price before answering. "
                 f"Do not use your memory for the price. "
+                f"{no_guess_rule}"
                 f'Customer question: "{q}"'
             )
         if status == "degraded":
@@ -334,12 +341,14 @@ class PricingSalesAgent:
                 f"Answer this question: Is {product_name} within the customer budget? "
                 f"Check your memory first. Your memory confidence is {score_str} "
                 f"(DEGRADED) — add a caveat that verification is recommended. "
+                f"{no_guess_rule}"
                 f'Customer question: "{q}"'
             )
         return (
             f"Answer this question: Is {product_name} within the customer budget? "
             f"Check your memory first. Your memory confidence is {score_str} (FRESH) — "
             f"you can trust it. "
+            f"{no_guess_rule}"
             f'Customer question: "{q}"'
         )
 
