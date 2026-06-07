@@ -45,10 +45,7 @@ services:
 
   # ── Revok: transparent proxy + entity scoring (port 7771 on host) ─────────
   revok:
-    build:
-      # Context is the repo root so the Dockerfile can COPY revok/ source.
-      context: ../..
-      dockerfile: examples/mem0_basic/Dockerfile
+    image: robertopc2/revok:latest
     ports:
       - "7771:7771"
     volumes:

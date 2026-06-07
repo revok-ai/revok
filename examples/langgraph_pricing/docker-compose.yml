@@ -38,9 +38,7 @@ services:
       retries: 20
 
   revok:
-    build:
-      context: ../..
-      dockerfile: examples/langgraph_pricing/Dockerfile.revok
+    image: robertopc2/revok:latest
     ports:
       - "${REVOK_HOST_PORT:-7773}:7771"
     volumes:
