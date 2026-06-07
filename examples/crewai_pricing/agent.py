@@ -116,7 +116,9 @@ class AgentAnswer:
 
 
 class GetCurrentPriceInput(BaseModel):
-    product_name: str = Field(description="Exact product name to look up in the database")
+    product_name: str = Field(
+        description="Exact product name to look up in the database"
+    )
 
 
 class CheckMemoryInput(BaseModel):
@@ -246,7 +248,9 @@ class CheckMemoryTool(BaseTool):
 
         result = f"Memory for {product_name}: {memory_text}"
         if revok_score is not None:
-            result += f" | Revok confidence: {revok_score:.2f} ({revok_status or 'unknown'})"
+            result += (
+                f" | Revok confidence: {revok_score:.2f} ({revok_status or 'unknown'})"
+            )
         self._call_log.append(product_name)
         self._last_result = result
         return result
@@ -623,9 +627,7 @@ class PricingSalesAgent:
             asyncio.run_coroutine_threadsafe(queue.put(_SENTINEL), loop)
             return res
 
-        crew_task: asyncio.Task[Any] = asyncio.create_task(
-            asyncio.to_thread(_sync_run)
-        )
+        crew_task: asyncio.Task[Any] = asyncio.create_task(asyncio.to_thread(_sync_run))
 
         # ── Drain queue until sentinel ────────────────────────────────
         while True:

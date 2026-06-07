@@ -97,7 +97,9 @@ async def _run(config_path: str) -> None:
         await store.close()
         sys.exit(1)
 
-    logger.info("Revok listening on http://%s:%d", config.server.host, config.server.port)
+    logger.info(
+        "Revok listening on http://%s:%d", config.server.host, config.server.port
+    )
 
     try:
         await asyncio.Event().wait()

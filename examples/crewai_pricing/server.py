@@ -100,11 +100,17 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Sync live DB price into state
     db_row = await db_module.get_price(db_module.PRODUCT_NAME)
     if db_row:
-        _demo_state[state_module._DEFAULTS.keys() and "db_price"] = db_row[db_module.COL_PRICE]
+        _demo_state[state_module._DEFAULTS.keys() and "db_price"] = db_row[
+            db_module.COL_PRICE
+        ]
         _demo_state["db_price"] = db_row[db_module.COL_PRICE]
         _demo_state["db_updated_at"] = db_row[db_module.COL_UPDATED]
 
-    _log.info("Demo server ready.  entity_key=%r  product=%r", _entity_key, db_module.PRODUCT_NAME)
+    _log.info(
+        "Demo server ready.  entity_key=%r  product=%r",
+        _entity_key,
+        db_module.PRODUCT_NAME,
+    )
     yield
 
 
@@ -126,7 +132,9 @@ def _detect_product(text: str) -> tuple[str, str]:
     for name, key in PRODUCT_CATALOG.items():
         if name.lower() in lower:
             return name, key
-    return db_module.PRODUCT_NAME, PRODUCT_CATALOG.get(db_module.PRODUCT_NAME, _entity_key)
+    return db_module.PRODUCT_NAME, PRODUCT_CATALOG.get(
+        db_module.PRODUCT_NAME, _entity_key
+    )
 
 
 async def _fetch_revok_entity(key: str | None = None) -> dict[str, Any] | None:
@@ -229,7 +237,12 @@ async def _purge_user_memories(
                         deleted += 1
                     else:
                         body = await del_resp.text()
-                        _log.warning("mem0 delete %s returned %s: %s", mem_id, del_resp.status, body[:100])
+                        _log.warning(
+                            "mem0 delete %s returned %s: %s",
+                            mem_id,
+                            del_resp.status,
+                            body[:100],
+                        )
             except Exception as exc:
                 _log.warning("mem0 delete %s failed: %s", mem_id, exc)
     except Exception as exc:
@@ -291,10 +304,14 @@ async def _heal_pricing_memory(
                             deleted += 1
                             _log.info(
                                 "_heal_pricing_memory: deleted entry %s (%s) for %s",
-                                mem_id[:8], text[:40], user_id,
+                                mem_id[:8],
+                                text[:40],
+                                user_id,
                             )
                 except Exception as exc:
-                    _log.warning("_heal_pricing_memory: delete %s failed: %s", mem_id, exc)
+                    _log.warning(
+                        "_heal_pricing_memory: delete %s failed: %s", mem_id, exc
+                    )
 
         if deleted:
             # Give mem0's vector store a moment to propagate the deletes before
@@ -310,7 +327,9 @@ async def _heal_pricing_memory(
         await _store_directly_to_mem0(session, mem0_url, user_id, content)
         _log.info(
             "_heal_pricing_memory: wrote healed memory for %s/%s @ $%.0f",
-            user_id, product_name, live_price,
+            user_id,
+            product_name,
+            live_price,
         )
 
 
@@ -337,7 +356,12 @@ async def _store_directly_to_mem0(
         ) as resp:
             if resp.status >= 500:
                 body = await resp.text()
-                _log.warning("mem0 write returned %s for user %s: %s", resp.status, user_id, body[:200])
+                _log.warning(
+                    "mem0 write returned %s for user %s: %s",
+                    resp.status,
+                    user_id,
+                    body[:200],
+                )
             # non-fatal: log and continue
     except Exception as exc:
         _log.warning("mem0 write failed for user %s: %s", user_id, exc)
@@ -433,16 +457,24 @@ async def _run_load_memory() -> None:
                     "Verified pricing from database."
                 )
                 await asyncio.gather(
-                    _store_directly_to_mem0(session, mem0_url, _without_revok.user_id, content),
-                    _store_directly_to_mem0(session, mem0_url, _with_revok.user_id, content),
+                    _store_directly_to_mem0(
+                        session, mem0_url, _without_revok.user_id, content
+                    ),
+                    _store_directly_to_mem0(
+                        session, mem0_url, _with_revok.user_id, content
+                    ),
                 )
-                loaded.append({"product": product, "price": price, "memory_content": content})
+                loaded.append(
+                    {"product": product, "price": price, "memory_content": content}
+                )
                 state_module.add_event(
                     _demo_state,
                     f"Memory loaded: {product} at ${price:.0f}/month",
                     kind="memory",
                 )
-                state_module.save(_demo_state)  # persist each event immediately so the UI updates live
+                state_module.save(
+                    _demo_state
+                )  # persist each event immediately so the UI updates live
 
         # Verify all products were written; retry any that mem0's LLM silently dropped.
         # Mem0 dedup is non-deterministic: concurrent writes for different user_ids with
@@ -458,12 +490,20 @@ async def _run_load_memory() -> None:
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
                         data = await resp.json()
-                        stored_texts = [m.get("memory", "") for m in data.get("results", [])]
-                missing = [p for p in expected_products if not any(p in t for t in stored_texts)]
+                        stored_texts = [
+                            m.get("memory", "") for m in data.get("results", [])
+                        ]
+                missing = [
+                    p
+                    for p in expected_products
+                    if not any(p in t for t in stored_texts)
+                ]
                 if missing:
                     _log.warning(
                         "_run_load_memory: %d missing products for %s: %s — retrying sequentially",
-                        len(missing), user_id, missing,
+                        len(missing),
+                        user_id,
+                        missing,
                     )
                     async with aiohttp.ClientSession() as rsession:
                         for row in catalog_rows:
@@ -475,22 +515,29 @@ async def _run_load_memory() -> None:
                                 f"Customer budget approved {product} at ${price:.0f}/month. "
                                 "Verified pricing from database."
                             )
-                            await _store_directly_to_mem0(rsession, mem0_url, user_id, content)
+                            await _store_directly_to_mem0(
+                                rsession, mem0_url, user_id, content
+                            )
                             await asyncio.sleep(1.0)
                 else:
                     _log.info(
                         "_run_load_memory: verified all %d products for %s",
-                        len(expected_products), user_id,
+                        len(expected_products),
+                        user_id,
                     )
             except Exception as exc:
-                _log.warning("_run_load_memory: verification failed for %s: %s", user_id, exc)
+                _log.warning(
+                    "_run_load_memory: verification failed for %s: %s", user_id, exc
+                )
 
         if loaded:
             # Seed state with the primary product as the active focus.
             primary = loaded[0]
             _demo_state["memory_content"] = primary["memory_content"]
             _demo_state["active_product"] = primary["product"]
-            _demo_state["active_entity_key"] = PRODUCT_CATALOG.get(primary["product"], _entity_key)
+            _demo_state["active_entity_key"] = PRODUCT_CATALOG.get(
+                primary["product"], _entity_key
+            )
             _demo_state["db_price"] = primary["price"]
 
     except Exception:
@@ -529,7 +576,9 @@ async def change_price(body: ChangePriceRequest) -> JSONResponse:
 
 
 @app.post("/actions/trigger-signal")
-async def trigger_signal(body: TriggerSignalRequest | None = Body(default=None)) -> JSONResponse:
+async def trigger_signal(
+    body: TriggerSignalRequest | None = Body(default=None),
+) -> JSONResponse:
     """Simulate a CDC event: an external system signals that pricing data changed.
 
     Sends a notification through the Revok proxy for the WITH-Revok agent only.
@@ -641,9 +690,13 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
 
     async with aiohttp.ClientSession() as session:
         # Run sequentially so intermediate events appear in the live log.
-        state_module.add_event(_demo_state, f"Asking agent WITHOUT Revok about {product}…", kind="info")
+        state_module.add_event(
+            _demo_state, f"Asking agent WITHOUT Revok about {product}…", kind="info"
+        )
         state_module.save(_demo_state)
-        ans_without = await _without_revok.answer_budget_question(session, product, None, question=question)
+        ans_without = await _without_revok.answer_budget_question(
+            session, product, None, question=question
+        )
 
         # Sync memory_content to the active product so DataLayer drift detection is accurate.
         if ans_without.memory_quote:
@@ -663,9 +716,13 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
         }
         state_module.save(_demo_state)
 
-        state_module.add_event(_demo_state, f"Asking agent WITH Revok about {product}…", kind="info")
+        state_module.add_event(
+            _demo_state, f"Asking agent WITH Revok about {product}…", kind="info"
+        )
         state_module.save(_demo_state)
-        ans_with = await _with_revok.answer_budget_question(session, product, detected_entity_key, question=question)
+        ans_with = await _with_revok.answer_budget_question(
+            session, product, detected_entity_key, question=question
+        )
 
         if ans_with.re_verified and ans_with.live_price is not None:
             # Heal mem0 directly (delete stale + write fresh) so the next fresh
@@ -673,9 +730,13 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
             # guaranteed complete before this response is returned — otherwise
             # the entity can recover to "fresh" while the background task is
             # still writing and the next ask reads the old value.
-            await _heal_pricing_memory(_with_revok.user_id, product, ans_with.live_price)
+            await _heal_pricing_memory(
+                _with_revok.user_id, product, ans_with.live_price
+            )
 
-        with_mode = ans_with.confidence_status + (" → re-verified" if ans_with.re_verified else "")
+        with_mode = ans_with.confidence_status + (
+            " → re-verified" if ans_with.re_verified else ""
+        )
         state_module.add_event(
             _demo_state,
             f"With Revok answered ({with_mode}): {ans_with.answer[:80]}",
@@ -713,6 +774,7 @@ async def get_memories() -> JSONResponse:
             )
     except Exception:
         return JSONResponse({"error": "mem0 unavailable"}, status_code=503)
+
     def _slim(m: dict) -> dict:
         return {
             "id": m.get("id", ""),
@@ -720,10 +782,13 @@ async def get_memories() -> JSONResponse:
             "created_at": m.get("created_at", ""),
             "updated_at": m.get("updated_at", ""),
         }
-    return JSONResponse({
-        "without_revok": [_slim(m) for m in mems_without],
-        "with_revok": [_slim(m) for m in mems_with],
-    })
+
+    return JSONResponse(
+        {
+            "without_revok": [_slim(m) for m in mems_without],
+            "with_revok": [_slim(m) for m in mems_with],
+        }
+    )
 
 
 @app.get("/health")
@@ -818,9 +883,7 @@ async def stream_ask_agent(
         queue: asyncio.Queue[dict] = asyncio.Queue()
         finished: dict[str, dict] = {}
 
-        async def drain(
-            agent: PricingSalesAgent, entity_key: str | None
-        ) -> None:
+        async def drain(agent: PricingSalesAgent, entity_key: str | None) -> None:
             agent_id = "with_revok" if agent.use_revok else "without_revok"
             try:
                 async with aiohttp.ClientSession() as sess:
@@ -884,7 +947,9 @@ async def stream_ask_agent(
                 if live_p is not None:
                     # Awaited inline — heal must complete before the SSE "done"
                     # event is emitted so mem0 is updated before the next ask.
-                    await _heal_pricing_memory(_with_revok.user_id, product, float(live_p))
+                    await _heal_pricing_memory(
+                        _with_revok.user_id, product, float(live_p)
+                    )
             _demo_state["answer_with_revok"] = {
                 "answer": with_r.get("answer", ""),
                 "memory_quote": with_r.get("memory_quote", ""),
@@ -980,10 +1045,12 @@ async def _build_state_snapshot() -> dict[str, Any]:
     def _entity_key_for(name: str) -> str:
         return PRODUCT_CATALOG.get(name, name.lower().replace(" ", "_"))
 
-    product_entities = await asyncio.gather(*[
-        _fetch_revok_entity(_entity_key_for(row[db_module.COL_NAME]))
-        for row in all_db_products
-    ])
+    product_entities = await asyncio.gather(
+        *[
+            _fetch_revok_entity(_entity_key_for(row[db_module.COL_NAME]))
+            for row in all_db_products
+        ]
+    )
     products: list[dict[str, Any]] = []
     for row, ent in zip(all_db_products, product_entities):
         if ent is not None:
@@ -993,16 +1060,20 @@ async def _build_state_snapshot() -> dict[str, Any]:
         else:
             p_score = 1.0 if _demo_state.get("memory_content") else None
             p_sig = 0
-            p_status = "fresh" if _demo_state.get("memory_content") else _score_to_status(None)
-        products.append({
-            "name": row[db_module.COL_NAME],
-            "entity_key": _entity_key_for(row[db_module.COL_NAME]),
-            "price": row[db_module.COL_PRICE],
-            "updated_at": row[db_module.COL_UPDATED],
-            "confidence_score": p_score,
-            "confidence_status": p_status,
-            "signal_count": p_sig,
-        })
+            p_status = (
+                "fresh" if _demo_state.get("memory_content") else _score_to_status(None)
+            )
+        products.append(
+            {
+                "name": row[db_module.COL_NAME],
+                "entity_key": _entity_key_for(row[db_module.COL_NAME]),
+                "price": row[db_module.COL_PRICE],
+                "updated_at": row[db_module.COL_UPDATED],
+                "confidence_score": p_score,
+                "confidence_status": p_status,
+                "signal_count": p_sig,
+            }
+        )
 
     return {
         **_demo_state,
@@ -1033,7 +1104,9 @@ async def list_products() -> JSONResponse:
     def _ekey(name: str) -> str:
         return PRODUCT_CATALOG.get(name, name.lower().replace(" ", "_"))
 
-    entities = await asyncio.gather(*[_fetch_revok_entity(_ekey(r[db_module.COL_NAME])) for r in all_db])
+    entities = await asyncio.gather(
+        *[_fetch_revok_entity(_ekey(r[db_module.COL_NAME])) for r in all_db]
+    )
     results = []
     for row, ent in zip(all_db, entities):
         if ent is not None:
@@ -1042,15 +1115,17 @@ async def list_products() -> JSONResponse:
         else:
             score = None
             sig = 0
-        results.append({
-            "name": row[db_module.COL_NAME],
-            "entity_key": _ekey(row[db_module.COL_NAME]),
-            "price": row[db_module.COL_PRICE],
-            "updated_at": row[db_module.COL_UPDATED],
-            "confidence_score": score,
-            "confidence_status": _score_to_status(score),
-            "signal_count": sig,
-        })
+        results.append(
+            {
+                "name": row[db_module.COL_NAME],
+                "entity_key": _ekey(row[db_module.COL_NAME]),
+                "price": row[db_module.COL_PRICE],
+                "updated_at": row[db_module.COL_UPDATED],
+                "confidence_score": score,
+                "confidence_status": _score_to_status(score),
+                "signal_count": sig,
+            }
+        )
     return JSONResponse({"total": len(results), "products": results})
 
 
@@ -1058,10 +1133,42 @@ class BulkSeedRequest(BaseModel):
     count: int = 50
 
 
-_BULK_PREFIXES = ["Quantum", "Nexus", "Apex", "Stellar", "Vortex", "Echo", "Prism", "Flux",
-                  "Hyper", "Solar", "Nano", "Turbo", "Ultra", "Micro", "Omni", "Meta"]
-_BULK_TYPES   = ["Cache", "Gateway", "Search", "Queue", "Store", "Engine", "Index",
-                 "Mesh", "Broker", "Stream", "Relay", "Vault", "Router", "Hub", "Node", "Sync"]
+_BULK_PREFIXES = [
+    "Quantum",
+    "Nexus",
+    "Apex",
+    "Stellar",
+    "Vortex",
+    "Echo",
+    "Prism",
+    "Flux",
+    "Hyper",
+    "Solar",
+    "Nano",
+    "Turbo",
+    "Ultra",
+    "Micro",
+    "Omni",
+    "Meta",
+]
+_BULK_TYPES = [
+    "Cache",
+    "Gateway",
+    "Search",
+    "Queue",
+    "Store",
+    "Engine",
+    "Index",
+    "Mesh",
+    "Broker",
+    "Stream",
+    "Relay",
+    "Vault",
+    "Router",
+    "Hub",
+    "Node",
+    "Sync",
+]
 
 
 @app.post("/actions/bulk-seed")
@@ -1081,10 +1188,10 @@ async def bulk_seed(body: BulkSeedRequest | None = Body(default=None)) -> JSONRe
     async with aiohttp.ClientSession() as session:
         for i in range(count):
             prefix = _BULK_PREFIXES[i % len(_BULK_PREFIXES)]
-            ptype  = _BULK_TYPES[(i // len(_BULK_PREFIXES)) % len(_BULK_TYPES)]
-            name   = f"{prefix} {ptype} v{i + 1}"
+            ptype = _BULK_TYPES[(i // len(_BULK_PREFIXES)) % len(_BULK_TYPES)]
+            name = f"{prefix} {ptype} v{i + 1}"
             entity_key = name.lower().replace(" ", "_")
-            price  = round(49.0 + (i * 9.7) % 951.0, 2)
+            price = round(49.0 + (i * 9.7) % 951.0, 2)
 
             await db_module.upsert_product(name, price)
 
@@ -1092,8 +1199,12 @@ async def bulk_seed(body: BulkSeedRequest | None = Body(default=None)) -> JSONRe
                 async with session.post(
                     f"{revok_url}/memories",
                     json={
-                        "messages": [{"role": "user", "content":
-                            f"Pricing initialized: {name} at ${price:.0f}/month."}],
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": f"Pricing initialized: {name} at ${price:.0f}/month.",
+                            }
+                        ],
                         "user_id": "bulk-seed",
                     },
                     headers={"X-Revok-Entity": entity_key},

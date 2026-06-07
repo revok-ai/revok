@@ -8,17 +8,16 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import tempfile
 from pathlib import Path
-from typing import AsyncIterator
 
 # On Windows, ProactorEventLoop can hang during teardown when there are pending
 # async I/O operations (e.g. from aiosqlite).  SelectorEventLoop closes cleanly.
 if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    if policy is not None:
+        asyncio.set_event_loop_policy(policy())
 
 import pytest
-import pytest_asyncio
 
 from revok.config import (
     Config,
@@ -115,7 +114,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     pytest-asyncio event-loop teardown) run first.  os._exit() then
     terminates the process hard, bypassing Python's thread-join phase.
     """
-    if sys.platform == "win32":
+    if sys.platform == "win32" or os.environ.get("CI"):
         try:
             sys.stdout.flush()
             sys.stderr.flush()

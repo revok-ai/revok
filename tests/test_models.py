@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import time
 
 import pytest
 
@@ -58,7 +57,11 @@ class TestEntity:
         assert Entity.normalize("bob") == "bob"
 
     def test_entity_key_is_normalized(self):
-        e = Entity(key=Entity.normalize("Alice Smith"), raw_text="Alice Smith", pattern_name="person")
+        e = Entity(
+            key=Entity.normalize("Alice Smith"),
+            raw_text="Alice Smith",
+            pattern_name="person",
+        )
         assert e.key == "alice smith"
 
     def test_frozen_immutability(self):
@@ -95,7 +98,9 @@ class TestEntityRecord:
 
 
 class TestEnrichedPayload:
-    def _make_record(self, key: str = "alice smith", score: float = 0.87) -> EntityRecord:
+    def _make_record(
+        self, key: str = "alice smith", score: float = 0.87
+    ) -> EntityRecord:
         return EntityRecord(
             entity_key=key,
             score=score,
@@ -151,7 +156,9 @@ class TestEnrichedPayload:
 
 class TestMemoryAdapterResponse:
     def test_is_error_true_for_4xx(self):
-        resp = MemoryAdapterResponse(status=404, body=b"not found", headers={}, is_error=True)
+        resp = MemoryAdapterResponse(
+            status=404, body=b"not found", headers={}, is_error=True
+        )
         assert resp.is_error is True
 
     def test_is_error_false_for_2xx(self):

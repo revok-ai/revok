@@ -20,15 +20,13 @@ Confidence DEGRADES when a signal arrives; it RECOVERS toward score_cap when
 no new signals arrive.
 """
 
-import math
-
 import pytest
 
 from revok.config import ScoringConfig
 from revok.models import EntityRecord
 from revok.scoring import ScoringEngine
 
-HALF_LIFE = 86400.0   # 1 day
+HALF_LIFE = 86400.0  # 1 day
 SIGNAL_STRENGTH = 0.3
 SCORE_CAP = 1.0
 
@@ -144,7 +142,7 @@ def test_high_severity_signal_drops_score_below_0_7():
     high_engine = ScoringEngine(
         ScoringConfig(half_life_seconds=HALF_LIFE, signal_strength=0.4, score_cap=1.0)
     )
-    score = high_engine.score(None, now=0.0)   # fresh entity, first signal
+    score = high_engine.score(None, now=0.0)  # fresh entity, first signal
     assert score < 0.7
 
 

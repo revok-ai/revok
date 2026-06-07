@@ -252,7 +252,9 @@ def load_config(path: str) -> Config:
         raise ConfigError(f"YAML parse error in '{path}': {exc}") from exc
 
     if not isinstance(data, dict):
-        raise ConfigError(f"Config file '{path}' must be a YAML mapping at the top level.")
+        raise ConfigError(
+            f"Config file '{path}' must be a YAML mapping at the top level."
+        )
 
     # --- server ---
     srv = _require(data, "server")
@@ -353,7 +355,9 @@ def load_config(path: str) -> Config:
                 ) from exc
             pattern_cfgs.append(PatternConfig(name=str(name), regex=str(regex)))
 
-    entity_matcher_cfg = EntityMatcherConfig(entities=entity_defs, patterns=pattern_cfgs)
+    entity_matcher_cfg = EntityMatcherConfig(
+        entities=entity_defs, patterns=pattern_cfgs
+    )
 
     # --- scoring ---
     sc = _require(data, "scoring")
@@ -380,7 +384,9 @@ def load_config(path: str) -> Config:
     hot_max = _require(ss, "hot_layer_max_entries", context="state_store")
 
     if not isinstance(hot_max, int) or hot_max <= 0:
-        raise ConfigError("state_store.hot_layer_max_entries must be a positive integer.")
+        raise ConfigError(
+            "state_store.hot_layer_max_entries must be a positive integer."
+        )
 
     state_store_cfg = StateStoreConfig(
         sqlite_path=str(sqlite_path),

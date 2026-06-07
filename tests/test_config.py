@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from revok.config import ConfigError, EntityDef, load_config
+from revok.config import ConfigError, load_config
 
 
 VALID_YAML = """\
@@ -65,7 +65,9 @@ class TestLoadConfigValid:
         assert not cfg.upstream.mem0_url.endswith("/")
 
     def test_write_methods_uppercased(self, tmp_path: Path):
-        yaml_content = VALID_YAML.replace('write_methods: ["POST"]', 'write_methods: ["post"]')
+        yaml_content = VALID_YAML.replace(
+            'write_methods: ["POST"]', 'write_methods: ["post"]'
+        )
         cfg = load_config(_write_yaml(tmp_path, yaml_content))
         assert cfg.upstream.write_methods == ["POST"]
 
@@ -78,8 +80,8 @@ class TestLoadConfigValid:
         yaml = VALID_YAML.replace(
             "entity_matcher:\n"
             "  patterns:\n"
-            "    - name: \"person\"\n"
-            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
+            '    - name: "person"\n'
+            '      regex: "\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b"',
             "entity_matcher:\n"
             "  entities:\n"
             "    - id: apex_hoodie\n"
@@ -99,8 +101,8 @@ class TestLoadConfigValid:
         yaml = VALID_YAML.replace(
             "entity_matcher:\n"
             "  patterns:\n"
-            "    - name: \"person\"\n"
-            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
+            '    - name: "person"\n'
+            '      regex: "\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b"',
             "entity_matcher:\n"
             "  entities:\n"
             "    - id: apex_hoodie\n"
@@ -124,7 +126,10 @@ class TestLoadConfigValid:
 
 class TestLoadConfigMissingKeys:
     def test_missing_server(self, tmp_path: Path):
-        yaml = VALID_YAML.replace("server:\n  host: \"127.0.0.1\"\n  port: 8080\n  startup_timeout_seconds: 10\n", "")
+        yaml = VALID_YAML.replace(
+            'server:\n  host: "127.0.0.1"\n  port: 8080\n  startup_timeout_seconds: 10\n',
+            "",
+        )
         with pytest.raises(ConfigError, match="server"):
             load_config(_write_yaml(tmp_path, yaml))
 
@@ -138,8 +143,8 @@ class TestLoadConfigMissingKeys:
         yaml_no_em = VALID_YAML.replace(
             "entity_matcher:\n"
             "  patterns:\n"
-            "    - name: \"person\"\n"
-            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"\n",
+            '    - name: "person"\n'
+            '      regex: "\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b"\n',
             "",
         )
         cfg = load_config(_write_yaml(tmp_path, yaml_no_em))
@@ -159,7 +164,9 @@ class TestLoadConfigValidationRules:
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_half_life_zero(self, tmp_path: Path):
-        yaml = VALID_YAML.replace("  half_life_seconds: 86400", "  half_life_seconds: 0")
+        yaml = VALID_YAML.replace(
+            "  half_life_seconds: 86400", "  half_life_seconds: 0"
+        )
         with pytest.raises(ConfigError, match="half_life"):
             load_config(_write_yaml(tmp_path, yaml))
 
@@ -169,7 +176,9 @@ class TestLoadConfigValidationRules:
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_invalid_mem0_url(self, tmp_path: Path):
-        yaml = VALID_YAML.replace('  mem0_url: "http://localhost:8000"', '  mem0_url: "not-a-url"')
+        yaml = VALID_YAML.replace(
+            '  mem0_url: "http://localhost:8000"', '  mem0_url: "not-a-url"'
+        )
         with pytest.raises(ConfigError, match="mem0_url"):
             load_config(_write_yaml(tmp_path, yaml))
 
@@ -184,7 +193,7 @@ class TestLoadConfigValidationRules:
     def test_empty_patterns_list_is_valid(self, tmp_path: Path):
         """Empty patterns list is accepted; entity_matcher still usable via catalog or header."""
         yaml = VALID_YAML.replace(
-            "  patterns:\n    - name: \"person\"\n      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
+            '  patterns:\n    - name: "person"\n      regex: "\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b"',
             "  patterns: []",
         )
         cfg = load_config(_write_yaml(tmp_path, yaml))
@@ -194,12 +203,9 @@ class TestLoadConfigValidationRules:
         yaml = VALID_YAML.replace(
             "entity_matcher:\n"
             "  patterns:\n"
-            "    - name: \"person\"\n"
-            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
-            "entity_matcher:\n"
-            "  entities:\n"
-            "    - aliases:\n"
-            "        - Apex Hoodie",
+            '    - name: "person"\n'
+            '      regex: "\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b"',
+            "entity_matcher:\n  entities:\n    - aliases:\n        - Apex Hoodie",
         )
         with pytest.raises(ConfigError, match="id"):
             load_config(_write_yaml(tmp_path, yaml))
@@ -208,12 +214,9 @@ class TestLoadConfigValidationRules:
         yaml = VALID_YAML.replace(
             "entity_matcher:\n"
             "  patterns:\n"
-            "    - name: \"person\"\n"
-            "      regex: \"\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b\"",
-            "entity_matcher:\n"
-            "  entities:\n"
-            "    - id: apex_hoodie\n"
-            "      aliases: []",
+            '    - name: "person"\n'
+            '      regex: "\\\\b[A-Z][a-z]+ [A-Z][a-z]+\\\\b"',
+            "entity_matcher:\n  entities:\n    - id: apex_hoodie\n      aliases: []",
         )
         with pytest.raises(ConfigError, match="aliases"):
             load_config(_write_yaml(tmp_path, yaml))
