@@ -7,6 +7,24 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.1] — 2026-06-06
+
+### Fixed
+- `GET /v1/entities/{key}` now returns the time-recovered confidence score via
+  `decay_at()` instead of the frozen stored value from the last write.
+- `POST /signals` endpoint added — dedicated signal ingestion path separate
+  from the memory write path.
+- README corrected — confidence retrieval requires an explicit
+  `GET /v1/entities/{key}` call; it is not returned automatically in the
+  memory search response.
+
+### Changed
+- `pyproject.toml` build backend corrected to `setuptools.build_meta`.
+- `pyproject.toml` version bumped to `0.1.1`.
+- `pyproject.toml` URLs updated with correct GitHub repository (`robertopc1/revok`).
+
+---
+
 ## [0.1.0] — 2026-05-29
 
 Initial MVP release. Builds the complete OSS core: transparent HTTP proxy,
@@ -135,4 +153,4 @@ scaffold, and the Mem0 memory adapter.
 
 ---
 
-[0.1.0]: https://github.com/your-org/revok/releases/tag/v0.1.0
+[0.1.0]: https://github.com/robertopc1/revok/releases/tag/v0.1.0

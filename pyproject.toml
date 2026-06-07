@@ -1,22 +1,30 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "revok"
-version = "0.1.0"
-description = "Transparent async HTTP proxy that enriches AI-agent memory writes with entity metadata"
+version = "0.1.1"
+description = "Event-driven memory validity layer for AI agents"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
 requires-python = ">=3.11"
-authors = [{ name = "Revok Contributors" }]
-keywords = ["ai", "agent", "memory", "proxy", "entity-extraction"]
+authors = [
+    { name = "Roberto Perez", email = "your@email.com" }
+]
+keywords = [
+    "ai", "agent", "memory", "proxy", "entity-extraction",
+    "langgraph", "crewai", "mem0", "llm", "rag", "validity"
+]
 classifiers = [
+    "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Framework :: AsyncIO",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "aiohttp>=3.9,<4",
@@ -35,6 +43,12 @@ dev = [
     "types-PyYAML>=6.0,<7",
 ]
 
+[project.urls]
+Homepage = "https://github.com/robertopc1/revok"
+Repository = "https://github.com/robertopc1/revok"
+Issues = "https://github.com/robertopc1/revok/issues"
+Changelog = "https://github.com/robertopc1/revok/blob/master/CHANGELOG.md"
+
 [project.scripts]
 revok = "revok.__main__:main"
 
@@ -47,3 +61,12 @@ timeout = 10
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
