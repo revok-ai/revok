@@ -231,3 +231,4 @@ examples/crewai_pricing/demo_state.json
 # Example runtime / generated files
 *.db
 demo_state.json
+TASKS.md

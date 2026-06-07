@@ -468,3 +468,177 @@ async def test_non_json_write_is_forwarded_raw(tmp_path: Path) -> None:
     assert received[0]["raw"] == raw_body
     # Must NOT contain x_revok enrichment
     assert b"x_revok" not in received[0]["raw"]
+
+
+# ---------------------------------------------------------------------------
+# FIX 1: GET /v1/entities/{key} returns time-recovered score via decay_at()
+# ---------------------------------------------------------------------------
+
+
+async def test_get_entity_returns_time_recovered_score(tmp_path: Path) -> None:
+    """GET /v1/entities/{entity_key} returns decay_at() score, not frozen stored score."""
+    import time as _time
+
+    from revok.models import EntityRecord
+
+    # Short half-life so 3-hour-old record shows clearly distinguishable recovery.
+    config = Config(
+        server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
+        upstream=UpstreamConfig(
+            mem0_url="http://127.0.0.1:1",
+            write_methods=["POST"],
+            write_paths=["/v1/memories"],
+        ),
+        entity_matcher=EntityMatcherConfig(
+            patterns=[PatternConfig(name="person", regex=r"\b[A-Z][a-z]+\b")]
+        ),
+        scoring=ScoringConfig(
+            half_life_seconds=3600.0,  # 1-hour half-life — recovery is substantial
+            signal_strength=0.3,
+            score_cap=1.0,
+        ),
+        state_store=StateStoreConfig(
+            sqlite_path=str(tmp_path / "decay_test.db"),
+            hot_layer_max_entries=10,
+        ),
+        logging=LoggingConfig(level="WARNING", format="%(levelname)s %(message)s"),
+    )
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    try:
+        # Plant a record with frozen score=0.0, last_seen 3 hours ago.
+        # decay_at will compute ~0.875 (1.0 - 1.0*exp(-ln2/3600*10800)).
+        frozen_score = 0.0
+        old_time = _time.time() - 10800.0  # 3 hours ago
+        old_record = EntityRecord(
+            entity_key="testentity",
+            score=frozen_score,
+            last_seen=old_time,
+            signal_count=1,
+            pattern_name="test",
+        )
+        await store.put(old_record)
+
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/entities/testentity")
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["entity_key"] == "testentity"
+            # Returned score must be greater than the frozen 0.0
+            assert body["score"] > frozen_score
+            # Must closely match what decay_at computes right now
+            expected = scorer.decay_at(old_record, _time.time())
+            assert abs(body["score"] - expected) < 0.01
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# FIX 2: POST /signals — dedicated endpoint separate from the write path
+# ---------------------------------------------------------------------------
+
+
+async def test_signal_endpoint_returns_202(tmp_path: Path) -> None:
+    """POST /signals with valid JSON body returns 202 Accepted."""
+    config = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.post(
+                "/signals",
+                json={
+                    "entity_refs": ["redis-enterprise-pricing"],
+                    "severity": "high",
+                    "source": "webhook",
+                    "payload": {},
+                },
+            )
+            assert resp.status == 202
+            body = await resp.json()
+            assert body.get("accepted") is True
+    finally:
+        await store.close()
+
+
+async def test_signal_endpoint_published_to_queue(tmp_path: Path) -> None:
+    """POST /signals publishes a Signal to the bus; enrich() is never called."""
+    import asyncio
+
+    from revok.signal_queue import AsyncioQueueBus
+
+    config = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    bus = AsyncioQueueBus()
+    try:
+        revok_app = build_app(config, store, matcher, scorer, bus=bus)
+        async with TestClient(TestServer(revok_app)) as client:
+            await client.post(
+                "/signals",
+                json={
+                    "entity_refs": ["redis-enterprise-pricing"],
+                    "severity": "high",
+                    "source": "webhook",
+                    "payload": {},
+                },
+            )
+        # Bus must have received exactly one signal
+        signal = await asyncio.wait_for(bus.consume(), timeout=1.0)
+        assert "redis-enterprise-pricing" in signal.raw_content
+        assert signal.source_id == "webhook"
+        assert signal.http_path == "/signals"
+    finally:
+        await store.close()
+        await bus.close()
+
+
+async def test_memory_write_still_goes_through_enrich(tmp_path: Path) -> None:
+    """Memory writes through the proxy still call enrich() when a bus is present."""
+    from revok.signal_queue import AsyncioQueueBus
+
+    captured: list[dict] = []
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        body = await request.json()
+        captured.append(body)
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        bus = AsyncioQueueBus()
+        try:
+            revok_app = build_app(config, store, matcher, scorer, bus=bus)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.post(
+                    "/v1/memories",
+                    json={"content": "Alice visited the lab"},
+                )
+                assert resp.status == 201
+        finally:
+            await store.close()
+            await bus.close()
+
+    # enrich() must have run — x_revok block must be present in upstream body
+    assert len(captured) == 1
+    assert "x_revok" in captured[0]
