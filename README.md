@@ -419,7 +419,6 @@ its own README.
 | AWS EventBridge   | Enterprise |
 | Google Pub/Sub    | Enterprise |
 
-**OSS limits:** ~1,000 signals/minute · single-process deployment · self-hosted only.
 The Enterprise tier adds multi-tenancy, managed cloud signal sources, SSO/RBAC,
 audit logging, and a SaaS dashboard.
 
