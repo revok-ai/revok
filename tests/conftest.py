@@ -12,7 +12,7 @@ from pathlib import Path
 
 # On Windows, ProactorEventLoop can hang during teardown when there are pending
 # async I/O operations (e.g. from aiosqlite).  SelectorEventLoop closes cleanly.
-if sys.platform == "win32":
+if sys.platform == "win32" or os.environ.get("CI"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import pytest
