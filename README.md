@@ -190,6 +190,16 @@ revok --config revok.yaml
 
 Point your agent's Mem0 client at the Revok URL instead of Mem0 directly. That's it.
 
+### Or run with Docker
+
+```bash
+docker pull robertopc2/revok:latest
+
+docker run -v ./revok.yaml:/config/revok.yaml \
+  -p 7771:7771 \
+  robertopc2/revok:latest
+```
+
 ---
 
 ## How confidence retrieval works
