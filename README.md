@@ -40,6 +40,9 @@
 - [The solution](#the-solution)
 - [Features](#features)
 - [Quick start](#quick-start)
+- [How confidence retrieval works](#how-confidence-retrieval-works)
+- [How Revok differs from TTL-based systems](#how-revok-differs-from-ttl-based-systems)
+- [Sending signals to Revok](#sending-signals-to-revok)
 - [How it works](#how-it-works)
 - [Architecture](#architecture)
 - [Configuration](#configuration)
@@ -81,21 +84,32 @@ Revok sits between your agent and its memory store as a **transparent HTTP proxy
 It listens for real-world signals, resolves which memories are affected using a
 **causal graph**, and attaches a **confidence score** at retrieval time.
 
-> **Zero agent refactoring required.** Drop it in front of Mem0 and your existing
-> code keeps working — now with a confidence signal it never had before.
+> **Minimal integration required.** Point Revok in front of Mem0 and your existing
+> memory writes are enriched automatically. Confidence is retrieved with one
+> explicit call when your agent needs it.
 
 ```python
-# Your existing code — completely unchanged
+# Step 1 — your existing memory search, completely unchanged
 memories = mem0.search(query, user_id=user_id)
 
-# Confidence is already in the response
-# {
-#   "content": "The Apex Hoodie is in stock",
-#   "metadata": { "revok_confidence": 0.26, "revok_status": "stale" }
-# }
+# Step 2 — get live confidence with one explicit call
+response = requests.get(
+    f"http://localhost:7771/v1/entities/{entity_key}"
+)
+confidence = response.json()["score"]         # live, time-recovered
+status     = response.json()["confidence_status"] # fresh/degraded/stale
+
+# Step 3 — agent decides what to do
+if status == "fresh":
+    answer_from_memory(memories)
+elif status == "degraded":
+    answer_with_caveat(memories)
+else:  # stale
+    re_verify_from_source()
 ```
 
-Signal processing is async. **Zero added read latency.**
+Reads bypass Revok entirely — **zero added read latency**. Confidence is retrieved
+via a separate explicit call to `GET /v1/entities/{key}` when needed.
 
 ---
 
@@ -128,8 +142,8 @@ are complementary: keep your retrieval, add a validity layer underneath it.
 
 ## Features
 
-- 🔌 **Drop-in proxy** — sits in front of Mem0 over HTTP; no SDK, no code changes.
-- 🧠 **Confidence at retrieval** — every memory carries a freshness score and status.
+- 🔌 **Drop-in proxy** — sits in front of Mem0 over HTTP; memory writes enriched automatically.
+- 🧠 **Live confidence on demand** — `GET /v1/entities/{key}` returns a time-recovered score, never a frozen snapshot.
 - 🌐 **World-aware** — ingests external signals (CDC, webhooks, streams) that invalidate beliefs.
 - 🕸️ **Causal graph** — one signal can degrade every downstream memory it affects (NetworkX BFS).
 - ⏱️ **Time decay + pressure** — confidence recovers over time and drops under signal pressure.
@@ -178,6 +192,75 @@ Point your agent's Mem0 client at the Revok URL instead of Mem0 directly. That's
 
 ---
 
+## How confidence retrieval works
+
+Revok uses three separate paths that never block each other:
+
+**Write path — Revok intercepts:**
+```
+Agent writes memory → Revok proxy → extracts entities → scores updated → forwarded to Mem0
+```
+
+**Read path — Revok not involved:**
+```
+Agent reads memory → directly to Mem0 → returned unchanged
+```
+Reads bypass Revok entirely. Zero added read latency.
+
+**Confidence path — explicit call:**
+```
+Agent checks confidence → GET /v1/entities/{entity_key} → returns live time-recovered score
+```
+
+The score returned by `GET /v1/entities/{key}` is always live — it reflects both
+the last signal received **and** time elapsed since then via `decay_at()`. It is
+never a frozen snapshot.
+
+---
+
+## How Revok differs from TTL-based systems
+
+**TTL- and age-based approaches** (session expiry, forgetting by max age, keep-top-N eviction):
+- Time passing drives memory lifecycle — sessions expire, old memories are pruned
+- No awareness of *why* something became stale
+- A memory can expire while still true, or survive while no longer true
+
+**Revok:**
+- Time alone never causes staleness
+- Only external signals cause confidence to drop
+- Time passing *after* a signal causes recovery toward fresh
+- A memory with no signals stays fresh indefinitely
+- Staleness is always causally linked to a real-world event
+
+Revok is complementary to lifecycle management, not a replacement for it. TTL and
+forgetting policies manage *how long memories live*. Revok manages *whether they
+are still true*. Use both.
+
+---
+
+## Sending signals to Revok
+
+When something changes in the real world, send a signal to the dedicated endpoint:
+
+```bash
+curl -X POST http://localhost:7771/signals \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_refs": ["redis-enterprise-pricing"],
+    "severity": "high",
+    "source": "webhook",
+    "payload": {}
+  }'
+```
+
+Revok returns `202 Accepted` immediately and processes the signal asynchronously —
+zero impact on your agent read or write latency.
+
+In production, wire this endpoint to an Azure Function trigger, a CDC pipeline, or
+any webhook-capable system.
+
+---
+
 ## How it works
 
 A real-world signal arrives, Revok figures out which memories it touches, and the
@@ -185,17 +268,23 @@ next time those memories are read they come back with a confidence score.
 
 ```mermaid
 flowchart TD
-    A[External signal] --> B[Signal normalizer]
-    B --> C[Entity resolver]
-    C -->|YAML registry / X-Revok-Entity| D[Causal graph]
-    D -->|NetworkX BFS traversal| E[Scoring engine]
+    A[External signal] --> B[POST /signals]
+    B --> C[AsyncioQueueBus]
+    C --> D[Entity resolver]
+    D -->|YAML registry / X-Revok-Entity| E[Scoring engine]
     E -->|exponential decay × pressure| F[State store]
-    F -->|SQLite WAL + hot layer| G[Metadata writer]
-    G -->|confidence in memory metadata| H[Agent read]
+
+    G[Agent memory write] --> H[Revok proxy]
+    H -->|enrich| I[Mem0]
+
+    J[Agent memory read] -->|bypasses Revok| I
+
+    K[Agent confidence check] --> L[GET /v1/entities/key]
+    L --> F
 ```
 
-Reads flow straight through the proxy to Mem0 and back — enriched, never delayed.
-Signal processing happens asynchronously on a separate path.
+Three separate paths — signal ingestion, memory writes, and confidence reads — never
+block each other. Signal processing is async. Memory reads bypass Revok entirely.
 
 ---
 
@@ -263,8 +352,9 @@ for inspecting confidence state:
 
 | Method   | Path                          | Description                          |
 |----------|-------------------------------|--------------------------------------|
+| `POST`   | `/signals`                    | Submit an external world-signal (202 async) |
 | `GET`    | `/v1/entities`                | Paginated list of all entity records |
-| `GET`    | `/v1/entities/{entity_key}`   | Single entity record (or `404`)      |
+| `GET`    | `/v1/entities/{entity_key}`   | Live time-recovered confidence score |
 | `DELETE` | `/v1/entities/{entity_key}`   | Remove an entity record              |
 | `*`      | `/{any other path}`           | Transparently proxied to Mem0        |
 
@@ -309,7 +399,7 @@ its own README.
 |-----------|-------------|
 | Mem0      | ✅ v0.1.0   |
 | Zep       | 🔜 v0.2.0   |
-| Redis AMR | 🔜 v0.3.0   |
+|Agent Memory Server | 🔜 v0.3.0   |
 
 **Signal sources**
 
