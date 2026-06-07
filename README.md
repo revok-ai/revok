@@ -1,6 +1,9 @@
 ﻿<!-- LOGO PLACEHOLDER — replace src with your logo once uploaded (e.g. docs/assets/logo.png) -->
 <div align="center">
-  <img src="docs/assets/logo.png" alt="Revok logo" width="160" />
+   <img src="https://raw.githubusercontent.com/robertopc1/revok/main/assets/logo-dark.png"
+       alt="Revok" width="300" #gh-dark-mode-only/>
+   <img src="https://raw.githubusercontent.com/robertopc1/revok/main/assets/logo-light.png"
+       alt="Revok" width="300" #gh-light-mode-only/>
 
   <h1>Revok</h1>
 
@@ -27,10 +30,8 @@
   </p>
 </div>
 
-<!-- DEMO PLACEHOLDER — replace with a screenshot or GIF of the dashboard once uploaded -->
-<div align="center">
-  <img src="docs/assets/demo.gif" alt="Revok demo — confidence collapsing from fresh to stale" width="800" />
-</div>
+<!-- DEMO GIF - coming soon -->
+
 
 ---
 
@@ -164,7 +165,7 @@ are complementary: keep your retrieval, add a validity layer underneath it.
 
 ```bash
 # Clone
-git clone https://github.com/your-org/revok.git
+git clone https://github.com/robertopc1/revok.git
 cd revok
 
 # Create a virtual environment and install
@@ -300,10 +301,7 @@ block each other. Signal processing is async. Memory reads bypass Revok entirely
 
 ## Architecture
 
-<!-- ARCHITECTURE DIAGRAM PLACEHOLDER — replace with your diagram image once uploaded -->
-<div align="center">
-  <img src="docs/assets/architecture.png" alt="Revok architecture diagram" width="800" />
-</div>
+<!-- ARCHITECTURE DIAGRAM - coming soon -->
 
 ```
 External signal
@@ -444,7 +442,7 @@ Please open an issue to discuss substantial changes before sending a PR.
 
 ## License
 
-[AGPL v3](LICENSE). Enterprise licensing available — contact **[your email]**.
+[AGPL v3](LICENSE). Enterprise licensing available — contact **[robertopc@gmail.com]**.
 
 ---
 
