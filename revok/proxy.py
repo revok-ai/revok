@@ -40,6 +40,7 @@ from revok.interfaces import StateStore
 from revok.metadata_writer import enrich
 from revok.models import EnrichedPayload, MemoryAdapterResponse, Signal
 from revok.scoring import ScoringEngine
+from revok.signal_queue import AsyncioQueueBus
 
 logger = logging.getLogger(__name__)
 
@@ -186,10 +187,11 @@ def build_app(
     store: StateStore,
     matcher: EntityMatcher,
     scorer: ScoringEngine,
+    bus: AsyncioQueueBus | None = None,
 ) -> aiohttp.web.Application:
     """Build and return the Revok aiohttp proxy application.
 
-    The application has a single catch-all route that:
+    The application has a catch-all route that:
 
     1. Normalises every incoming request into a
        :class:`~revok.models.Signal` (FR-004).
@@ -201,11 +203,17 @@ def build_app(
     5. Returns ``502 Bad Gateway`` on
        ``aiohttp.ClientConnectorError`` (proxy-api.md §Error Semantics).
 
+    A dedicated ``POST /signals`` route receives external world-signals and
+    publishes them to *bus* without touching the Mem0 write path.
+
     Args:
         config: Full Revok configuration.
         store: Persistent entity state store.
         matcher: Named-regex entity extractor.
         scorer: Exponential decay scoring engine.
+        bus: Optional signal bus for the ``POST /signals`` endpoint.
+            A new :class:`~revok.signal_queue.AsyncioQueueBus` is created
+            internally if *bus* is ``None``.
 
     Returns:
         :class:`aiohttp.web.Application` ready for
@@ -214,6 +222,8 @@ def build_app(
     write_methods: frozenset[str] = frozenset(
         m.upper() for m in config.upstream.write_methods
     )
+
+    _bus = bus if bus is not None else AsyncioQueueBus()
 
     async def _handle_get_entity(
         request: aiohttp.web.Request,
@@ -227,10 +237,12 @@ def build_app(
                 content_type="application/json",
                 body=json.dumps({"error": "not_found"}).encode(),
             )
+        data = dataclasses.asdict(record)
+        data["score"] = scorer.decay_at(record, time.time())
         return aiohttp.web.Response(
             status=200,
             content_type="application/json",
-            body=json.dumps(dataclasses.asdict(record)).encode(),
+            body=json.dumps(data).encode(),
         )
 
     async def _handle_delete_entity(
@@ -269,6 +281,52 @@ def build_app(
             status=200,
             content_type="application/json",
             body=json.dumps([dataclasses.asdict(r) for r in records]).encode(),
+        )
+
+    async def _handle_signal(
+        request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        """POST /signals — accept an external world-signal and publish to the bus.
+
+        Accepts JSON body::
+
+            {"entity_refs": [...], "severity": "high", "source": "webhook", "payload": {}}
+
+        Returns 202 immediately.  Processing is fully async via *_bus*.
+        Does NOT call ``enrich()`` or touch the Mem0 write path.
+        """
+        body_bytes = await request.read()
+        try:
+            parsed: dict = json.loads(body_bytes) if body_bytes else {}
+        except (json.JSONDecodeError, ValueError) as exc:
+            return aiohttp.web.Response(
+                status=400,
+                content_type="application/json",
+                body=json.dumps({"error": "invalid_body", "detail": str(exc)}).encode(),
+            )
+
+        entity_refs: list[str] = parsed.get("entity_refs") or []
+        source: str = str(parsed.get("source") or "webhook")
+        raw_content = (
+            " ".join(entity_refs)
+            if entity_refs
+            else body_bytes.decode("utf-8", errors="replace")
+        )
+
+        signal = Signal(
+            raw_content=raw_content,
+            source_id=source,
+            timestamp=time.time(),
+            http_method="POST",
+            http_path="/signals",
+            original_body=body_bytes,
+            headers=dict(request.headers),
+        )
+        await _bus.publish(signal)
+        return aiohttp.web.Response(
+            status=202,
+            content_type="application/json",
+            body=json.dumps({"accepted": True}).encode(),
         )
 
     async def _handle(request: aiohttp.web.Request) -> aiohttp.web.Response:
@@ -354,5 +412,6 @@ def build_app(
     app.router.add_get("/v1/entities/{entity_key}", _handle_get_entity)
     app.router.add_delete("/v1/entities/{entity_key}", _handle_delete_entity)
     app.router.add_get("/v1/entities", _handle_list_entities)
+    app.router.add_post("/signals", _handle_signal)
     app.router.add_route(aiohttp.hdrs.METH_ANY, "/{path_info:.*}", _handle)
     return app
