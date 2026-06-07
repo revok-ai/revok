@@ -53,8 +53,7 @@ class EntityMatcher:
     def __init__(self, config: EntityMatcherConfig) -> None:
         # Legacy regex patterns (backward-compatible; key = raw_text.lower())
         self._patterns: list[tuple[str, re.Pattern[str]]] = [
-            (pat.name, re.compile(pat.regex))
-            for pat in config.patterns
+            (pat.name, re.compile(pat.regex)) for pat in config.patterns
         ]
         # Alias catalog: compile each alias as word-boundary case-insensitive regex.
         # Tuple: (compiled_pattern, canonical_entity_id)
@@ -110,6 +109,8 @@ class EntityMatcher:
                 key = Entity.normalize(raw_text)
                 if key and key not in seen_keys:
                     seen_keys.add(key)
-                    entities.append(Entity(key=key, raw_text=raw_text, pattern_name=name))
+                    entities.append(
+                        Entity(key=key, raw_text=raw_text, pattern_name=name)
+                    )
 
         return entities

@@ -38,8 +38,8 @@ except ModuleNotFoundError:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 PROXY = "http://localhost:7771"
-ENTITY_KEY = "redis enterprise"          # normalised: lower-cased match of the regex
-HALF_LIFE_S = 10                          # must match revok.yaml scoring.half_life_seconds
+ENTITY_KEY = "redis enterprise"  # normalised: lower-cased match of the regex
+HALF_LIFE_S = 10  # must match revok.yaml scoring.half_life_seconds
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -80,6 +80,7 @@ def wait_with_countdown(seconds: int) -> None:
 
 # ── Demo ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     # ------------------------------------------------------------------
     # Step 1: store the original pricing memory
@@ -87,8 +88,7 @@ def main() -> None:
     section("Step 1 — Store memory: Redis Enterprise is $500 / month")
 
     resp = post_memory(
-        "Redis Enterprise pricing is $500 per month "
-        "for a 10 GB active-memory cluster."
+        "Redis Enterprise pricing is $500 per month for a 10 GB active-memory cluster."
     )
     print(f"Mem0 response:\n{json.dumps(resp, indent=2)}")
 
@@ -105,8 +105,7 @@ def main() -> None:
     # Step 2: let the score decay for one half-life
     # ------------------------------------------------------------------
     section(
-        f"Step 2 — Waiting {HALF_LIFE_S}s (one half-life) "
-        f"to simulate time passing …"
+        f"Step 2 — Waiting {HALF_LIFE_S}s (one half-life) to simulate time passing …"
     )
 
     wait_with_countdown(HALF_LIFE_S)

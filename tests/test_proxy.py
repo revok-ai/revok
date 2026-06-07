@@ -5,10 +5,8 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer, TestClient
 
@@ -233,6 +231,7 @@ async def test_write_unreachable_upstream_response_is_error(tmp_path: Path) -> N
 
 async def test_get_entity_returns_record_after_write(tmp_path: Path) -> None:
     """GET /v1/entities/{entity_key} returns 200 + JSON after a matching write."""
+
     async def _mock_mem0(request: web.Request) -> web.Response:
         return web.json_response({"result": "ok"}, status=201)
 
@@ -264,6 +263,7 @@ async def test_get_entity_returns_record_after_write(tmp_path: Path) -> None:
 
 async def test_get_entity_returns_404_when_not_found(tmp_path: Path) -> None:
     """GET /v1/entities/{entity_key} returns 404 JSON for unknown keys."""
+
     async def _mock_mem0(request: web.Request) -> web.Response:
         return web.json_response({}, status=200)
 
@@ -291,6 +291,7 @@ async def test_get_entity_returns_404_when_not_found(tmp_path: Path) -> None:
 
 async def test_list_entities_returns_paginated_results(tmp_path: Path) -> None:
     """GET /v1/entities returns a JSON list with offset/limit support."""
+
     async def _mock_mem0(request: web.Request) -> web.Response:
         return web.json_response({"result": "ok"}, status=201)
 
@@ -329,6 +330,7 @@ async def test_list_entities_returns_paginated_results(tmp_path: Path) -> None:
 
 async def test_delete_entity_returns_200_and_removes_record(tmp_path: Path) -> None:
     """DELETE /v1/entities/{entity_key} returns 200 and the record is gone."""
+
     async def _mock_mem0(request: web.Request) -> web.Response:
         return web.json_response({"result": "ok"}, status=201)
 

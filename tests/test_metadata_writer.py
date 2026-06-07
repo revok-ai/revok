@@ -18,7 +18,12 @@
 
 import pytest
 
-from revok.config import EntityMatcherConfig, PatternConfig, ScoringConfig, StateStoreConfig
+from revok.config import (
+    EntityMatcherConfig,
+    PatternConfig,
+    ScoringConfig,
+    StateStoreConfig,
+)
 from revok.entity_matcher import EntityMatcher
 from revok.metadata_writer import enrich
 from revok.models import Signal

@@ -52,16 +52,28 @@ QDRANT_PORT: int = int(os.environ.get("QDRANT_PORT", "6333"))
 _AZURE_KEY: str = os.environ.get("AZURE_OPENAI_API_KEY", "")
 _AZURE_ENDPOINT_RAW: str = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
 # Shared fallback; individual overrides take priority.
-_AZURE_API_VERSION: str = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
-_AZURE_LLM_DEPLOYMENT: str = os.environ.get("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini")
-_AZURE_LLM_API_VERSION: str = os.environ.get("AZURE_OPENAI_LLM_API_VERSION", _AZURE_API_VERSION)
-_AZURE_EMBEDDER_DEPLOYMENT: str = os.environ.get("AZURE_OPENAI_EMBEDDER_DEPLOYMENT", "text-embedding-ada-002")
-_AZURE_EMBEDDER_API_VERSION: str = os.environ.get("AZURE_OPENAI_EMBEDDER_API_VERSION", _AZURE_API_VERSION)
+_AZURE_API_VERSION: str = os.environ.get(
+    "AZURE_OPENAI_API_VERSION", "2025-04-01-preview"
+)
+_AZURE_LLM_DEPLOYMENT: str = os.environ.get(
+    "AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini"
+)
+_AZURE_LLM_API_VERSION: str = os.environ.get(
+    "AZURE_OPENAI_LLM_API_VERSION", _AZURE_API_VERSION
+)
+_AZURE_EMBEDDER_DEPLOYMENT: str = os.environ.get(
+    "AZURE_OPENAI_EMBEDDER_DEPLOYMENT", "text-embedding-ada-002"
+)
+_AZURE_EMBEDDER_API_VERSION: str = os.environ.get(
+    "AZURE_OPENAI_EMBEDDER_API_VERSION", _AZURE_API_VERSION
+)
 
 # Plain OpenAI
 _OPENAI_KEY: str = os.environ.get("OPENAI_API_KEY", "")
 _OPENAI_LLM_MODEL: str = os.environ.get("OPENAI_LLM_MODEL", "gpt-4o-mini")
-_OPENAI_EMBEDDER_MODEL: str = os.environ.get("OPENAI_EMBEDDER_MODEL", "text-embedding-3-small")
+_OPENAI_EMBEDDER_MODEL: str = os.environ.get(
+    "OPENAI_EMBEDDER_MODEL", "text-embedding-3-small"
+)
 
 
 def _azure_base_endpoint(raw: str) -> str:
@@ -94,11 +106,13 @@ def _build_mem0_config() -> dict[str, Any]:
         logger.info("Provider: Azure OpenAI  endpoint=%s", endpoint)
         logger.info(
             "Azure LLM     deployment=%s  api_version=%s",
-            _AZURE_LLM_DEPLOYMENT, _AZURE_LLM_API_VERSION,
+            _AZURE_LLM_DEPLOYMENT,
+            _AZURE_LLM_API_VERSION,
         )
         logger.info(
             "Azure Embedder deployment=%s  api_version=%s",
-            _AZURE_EMBEDDER_DEPLOYMENT, _AZURE_EMBEDDER_API_VERSION,
+            _AZURE_EMBEDDER_DEPLOYMENT,
+            _AZURE_EMBEDDER_API_VERSION,
         )
         return {
             "vector_store": vector_store,
@@ -129,7 +143,11 @@ def _build_mem0_config() -> dict[str, Any]:
         }
 
     if _OPENAI_KEY:
-        logger.info("Provider: OpenAI  llm=%s  embedder=%s", _OPENAI_LLM_MODEL, _OPENAI_EMBEDDER_MODEL)
+        logger.info(
+            "Provider: OpenAI  llm=%s  embedder=%s",
+            _OPENAI_LLM_MODEL,
+            _OPENAI_EMBEDDER_MODEL,
+        )
         return {
             "vector_store": vector_store,
             "llm": {

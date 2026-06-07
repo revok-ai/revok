@@ -94,7 +94,9 @@ class SqliteStateStore:
                 "Delete or restore the file and restart Revok."
             ) from exc
         except Exception as exc:
-            logger.critical("Failed to open state store at %s: %s", self._config.sqlite_path, exc)
+            logger.critical(
+                "Failed to open state store at %s: %s", self._config.sqlite_path, exc
+            )
             raise
 
     async def get(self, entity_key: str) -> EntityRecord | None:
@@ -114,7 +116,9 @@ class SqliteStateStore:
             return self._apply_decay(self._hot[entity_key])
 
         # SQLite fallback
-        assert self._db is not None, "SqliteStateStore.open() must be called before get()"
+        assert self._db is not None, (
+            "SqliteStateStore.open() must be called before get()"
+        )
         async with self._db.execute(
             "SELECT entity_key, score, last_seen, signal_count, pattern_name "
             "FROM entity_records WHERE entity_key = ?",
@@ -147,7 +151,9 @@ class SqliteStateStore:
         Args:
             record: :class:`~revok.models.EntityRecord` to store.
         """
-        assert self._db is not None, "SqliteStateStore.open() must be called before put()"
+        assert self._db is not None, (
+            "SqliteStateStore.open() must be called before put()"
+        )
         await self._db.execute(
             "INSERT INTO entity_records "
             "  (entity_key, score, last_seen, signal_count, pattern_name) "
@@ -194,9 +200,7 @@ class SqliteStateStore:
         while len(self._hot) > self._config.hot_layer_max_entries:
             self._hot.popitem(last=False)
 
-    async def list_all(
-        self, offset: int = 0, limit: int = 100
-    ) -> list[EntityRecord]:
+    async def list_all(self, offset: int = 0, limit: int = 100) -> list[EntityRecord]:
         """Return a paginated list of all stored entity records.
 
         Records are returned in ascending ``entity_key`` order with read-time
@@ -209,7 +213,9 @@ class SqliteStateStore:
         Returns:
             List of :class:`~revok.models.EntityRecord` with current scores.
         """
-        assert self._db is not None, "SqliteStateStore.open() must be called before list_all()"
+        assert self._db is not None, (
+            "SqliteStateStore.open() must be called before list_all()"
+        )
         async with self._db.execute(
             "SELECT entity_key, score, last_seen, signal_count, pattern_name "
             "FROM entity_records ORDER BY entity_key LIMIT ? OFFSET ?",
@@ -240,7 +246,9 @@ class SqliteStateStore:
         Returns:
             True if a row was deleted, False if it did not exist.
         """
-        assert self._db is not None, "SqliteStateStore.open() must be called before delete()"
+        assert self._db is not None, (
+            "SqliteStateStore.open() must be called before delete()"
+        )
         async with self._db.execute(
             "DELETE FROM entity_records WHERE entity_key = ?",
             (entity_key,),

@@ -397,9 +397,7 @@ def build_app(
 
         # Strip hop-by-hop headers before returning to client
         safe_headers = {
-            k: v
-            for k, v in result.headers.items()
-            if k.lower() not in _HOP_BY_HOP
+            k: v for k, v in result.headers.items() if k.lower() not in _HOP_BY_HOP
         }
 
         return aiohttp.web.Response(

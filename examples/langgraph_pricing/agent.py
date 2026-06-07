@@ -35,7 +35,6 @@ Mem0 and Revok HTTP calls inside the graph create their own aiohttp sessions.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import re
@@ -155,7 +154,9 @@ def _build_prompt(state: AgentState) -> tuple[str, str]:
         Tuple of (system_prompt, user_prompt).
     """
     product = state["product_name"]
-    question = state.get("question") or f"What is the current price for {product} per month?"
+    question = (
+        state.get("question") or f"What is the current price for {product} per month?"
+    )
     raw_memory = state.get("memory_content") or ""
     has_memory = bool(raw_memory.strip())
     memory = raw_memory if has_memory else "No memory available."
@@ -175,7 +176,7 @@ def _build_prompt(state: AgentState) -> tuple[str, str]:
         user = (
             f"Product: {product}\n"
             f"Memory: none\n"
-            f"Customer question: \"{question}\"\n"
+            f'Customer question: "{question}"\n'
             "Tell the customer you have no pricing information for this product yet "
             "and that they should try again after pricing data has been loaded."
         )
@@ -190,7 +191,7 @@ def _build_prompt(state: AgentState) -> tuple[str, str]:
         user = (
             f"Product: {product}\n"
             f"Memory: {memory}\n"
-            f"Customer question: \"{question}\"\n"
+            f'Customer question: "{question}"\n'
             "Answer from memory."
         )
         return system, user
@@ -208,7 +209,7 @@ def _build_prompt(state: AgentState) -> tuple[str, str]:
             f"Product: {product}\n"
             f"Memory (STALE, score={score_str}): {memory}\n"
             f"Live database price (re-verified): ${live_price:.0f}/month\n"
-            f"Customer question: \"{question}\"\n"
+            f'Customer question: "{question}"\n'
             "Answer using the live price. Explain that you re-verified."
         )
         return system, user
@@ -223,7 +224,7 @@ def _build_prompt(state: AgentState) -> tuple[str, str]:
         user = (
             f"Product: {product}\n"
             f"Memory (DEGRADED, score={score_str}): {memory}\n"
-            f"Customer question: \"{question}\"\n"
+            f'Customer question: "{question}"\n'
             "Answer from memory but include a caveat that verification is recommended."
         )
         return system, user
@@ -236,7 +237,7 @@ def _build_prompt(state: AgentState) -> tuple[str, str]:
     user = (
         f"Product: {product}\n"
         f"Memory (FRESH, score={score_str}): {memory}\n"
-        f"Customer question: \"{question}\"\n"
+        f'Customer question: "{question}"\n'
         "Answer confidently from memory."
     )
     return system, user
@@ -299,14 +300,18 @@ class LangGraphPricingSalesAgent:
             signal_count = 0
 
             if self.use_revok and state.get("entity_key"):
-                confidence_score, signal_count, confidence_status = (
-                    await self._get_revok_confidence(state["entity_key"])
-                )
+                (
+                    confidence_score,
+                    signal_count,
+                    confidence_status,
+                ) = await self._get_revok_confidence(state["entity_key"])
 
             memory_content: str | None = None
             async with aiohttp.ClientSession() as sess:
                 memories = await self._list_memories(sess)
-            memory_content = self._find_pricing_memory(memories, state["product_name"]) or None
+            memory_content = (
+                self._find_pricing_memory(memories, state["product_name"]) or None
+            )
 
             return {
                 "confidence_score": confidence_score,
@@ -343,7 +348,10 @@ class LangGraphPricingSalesAgent:
             """Call the LLM to generate a natural-language pricing answer."""
             system_prompt, user_prompt = _build_prompt(state)
             response = await self._llm.ainvoke(
-                [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+                [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_prompt),
+                ]
             )
             return {"final_answer": response.content}
 

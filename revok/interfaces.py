@@ -112,9 +112,7 @@ class StateStore(Protocol):
         """
         ...
 
-    async def list_all(
-        self, offset: int = 0, limit: int = 100
-    ) -> list[EntityRecord]:
+    async def list_all(self, offset: int = 0, limit: int = 100) -> list[EntityRecord]:
         """Return a paginated list of all stored entity records.
 
         Args:

@@ -16,8 +16,6 @@
 
 """Tests for revok.state_store.SqliteStateStore."""
 
-import sqlite3
-
 import pytest
 
 from revok.config import ScoringConfig, StateStoreConfig
@@ -26,7 +24,9 @@ from revok.scoring import ScoringEngine
 from revok.state_store import SqliteStateStore
 
 
-def make_config(tmp_path, name: str = "test.db", max_entries: int = 10) -> StateStoreConfig:
+def make_config(
+    tmp_path, name: str = "test.db", max_entries: int = 10
+) -> StateStoreConfig:
     return StateStoreConfig(
         sqlite_path=str(tmp_path / name),
         hot_layer_max_entries=max_entries,
@@ -127,7 +127,9 @@ async def test_decay_on_read_returns_decayed_score(tmp_path):
     half_life = 10.0  # seconds
     score_cap = 100.0
     scorer = ScoringEngine(
-        ScoringConfig(half_life_seconds=half_life, signal_strength=1.0, score_cap=score_cap)
+        ScoringConfig(
+            half_life_seconds=half_life, signal_strength=1.0, score_cap=score_cap
+        )
     )
     cfg = StateStoreConfig(
         sqlite_path=str(tmp_path / "decay.db"),

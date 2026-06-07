@@ -16,8 +16,6 @@
 
 """Tests for revok.entity_matcher.EntityMatcher."""
 
-import pytest
-
 from revok.config import EntityDef, EntityMatcherConfig, PatternConfig
 from revok.entity_matcher import EntityMatcher
 
@@ -166,7 +164,11 @@ def test_alias_catalog_no_match_returns_empty():
 def test_alias_catalog_and_legacy_patterns_coexist():
     """Both modes active simultaneously; alias catalog entries checked first."""
     config = EntityMatcherConfig(
-        entities=[EntityDef(id="apex_hoodie", display_name="Apex Hoodie", aliases=["Apex Hoodie"])],
+        entities=[
+            EntityDef(
+                id="apex_hoodie", display_name="Apex Hoodie", aliases=["Apex Hoodie"]
+            )
+        ],
         patterns=[PatternConfig(name="person", regex=r"\bAlice\b")],
     )
     matcher = EntityMatcher(config)
