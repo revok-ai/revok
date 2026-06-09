@@ -189,3 +189,52 @@ class ZepAdapter:
         if not self._closed:
             await self._session.close()
             self._closed = True
+
+    @classmethod
+    def is_write_request(
+        cls, method: str, path: str, config: UpstreamConfig
+    ) -> bool:
+        """Return True if this request should trigger the enrichment pipeline.
+
+        For Zep mode a request is a write when the path is the exact
+        session-memory endpoint *and* the HTTP method is in
+        ``config.write_methods``.
+        """
+        return (
+            _extract_session_id(path) is not None
+            and method.upper() in {m.upper() for m in config.write_methods}
+        )
+
+    @classmethod
+    def extract_signal_context(
+        cls, path: str, headers: dict[str, str], body_bytes: bytes
+    ) -> tuple[str, str]:
+        """Return ``(source_id, raw_content)`` for Signal construction.
+
+        For Zep mode ``source_id`` is the session ID extracted from the path
+        (or ``X-Agent-ID`` as a fallback).  ``raw_content`` is assembled by
+        joining ``messages[].content`` fields when the body is a Zep memory
+        payload, or falls back to the raw UTF-8 body.
+        """
+        sid = _extract_session_id(path)
+        source_id = sid or headers.get("X-Agent-ID") or "unknown"
+        raw_content: str
+        try:
+            if body_bytes:
+                parsed = json.loads(body_bytes)
+                if (
+                    isinstance(parsed, dict)
+                    and isinstance(parsed.get("messages"), list)
+                ):
+                    raw_content = " ".join(
+                        str(m["content"])
+                        for m in parsed["messages"]
+                        if isinstance(m, dict) and m.get("content")
+                    )
+                else:
+                    raw_content = body_bytes.decode("utf-8", errors="replace")
+            else:
+                raw_content = ""
+        except (json.JSONDecodeError, ValueError):
+            raw_content = body_bytes.decode("utf-8", errors="replace")
+        return source_id, raw_content

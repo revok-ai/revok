@@ -33,8 +33,7 @@ import aiohttp
 import aiohttp.hdrs
 import aiohttp.web
 
-from revok.adapters import Mem0Adapter, ZepAdapter
-from revok.adapters.zep import _extract_session_id as _zep_extract_session_id
+from revok.adapters import _REGISTRY, build_adapter
 from revok.config import Config
 from revok.entity_matcher import EntityMatcher
 from revok.interfaces import StateStore
@@ -97,15 +96,7 @@ def build_app(
         :class:`aiohttp.web.Application` ready for
         :class:`aiohttp.web.AppRunner`.
     """
-    write_methods: frozenset[str] = frozenset(
-        m.upper() for m in config.upstream.write_methods
-    )
-    is_zep_mode: bool = config.adapter_type == "zep"
-    zep_write_methods: frozenset[str] = (
-        frozenset(m.upper() for m in config.upstream.write_methods)
-        if is_zep_mode
-        else frozenset()
-    )
+    adapter_cls = _REGISTRY[config.adapter_type]
 
     _bus = bus if bus is not None else AsyncioQueueBus()
 
@@ -243,33 +234,9 @@ def build_app(
             )
 
         # FR-004: Normalise raw request into Signal before any other processing
-        # Derive source_id and raw_content based on adapter mode.
-        if is_zep_mode:
-            _sid = _zep_extract_session_id(request.path)
-            source_id: str = _sid or request.headers.get("X-Agent-ID") or "unknown"
-            # Extract messages[].content for entity matching; fall back to raw text
-            raw_content: str
-            try:
-                if body_bytes:
-                    _parsed = json.loads(body_bytes)
-                    if (
-                        isinstance(_parsed, dict)
-                        and isinstance(_parsed.get("messages"), list)
-                    ):
-                        raw_content = " ".join(
-                            str(m["content"])
-                            for m in _parsed["messages"]
-                            if isinstance(m, dict) and m.get("content")
-                        )
-                    else:
-                        raw_content = body_bytes.decode("utf-8", errors="replace")
-                else:
-                    raw_content = ""
-            except (json.JSONDecodeError, ValueError):
-                raw_content = body_bytes.decode("utf-8", errors="replace")
-        else:
-            source_id = request.headers.get("X-Agent-ID", "unknown")
-            raw_content = body_bytes.decode("utf-8", errors="replace")
+        source_id, raw_content = adapter_cls.extract_signal_context(
+            request.path, dict(request.headers), body_bytes
+        )
 
         signal = Signal(
             raw_content=raw_content,
@@ -282,17 +249,10 @@ def build_app(
         )
 
         async with aiohttp.ClientSession() as session:
-            if is_zep_mode:
-                _adapter: Mem0Adapter | ZepAdapter = ZepAdapter(config.upstream, session)
-                is_write = (
-                    _zep_extract_session_id(request.path) is not None
-                    and signal.http_method.upper() in zep_write_methods
-                )
-            else:
-                _adapter = Mem0Adapter(config.upstream, session)
-                is_write = signal.http_method.upper() in write_methods and any(
-                    request.path.startswith(p) for p in config.upstream.write_paths
-                )
+            _adapter = build_adapter(config.adapter_type, config.upstream, session)
+            is_write = adapter_cls.is_write_request(
+                signal.http_method, request.path, config.upstream
+            )
 
             if is_write:
                 # T041: Guard — only enrich if the body is parseable as JSON

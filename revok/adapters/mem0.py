@@ -155,3 +155,30 @@ class Mem0Adapter:
         if not self._closed:
             await self._session.close()
             self._closed = True
+
+    @classmethod
+    def is_write_request(
+        cls, method: str, path: str, config: UpstreamConfig
+    ) -> bool:
+        """Return True if this request should trigger the enrichment pipeline.
+
+        For Mem0 mode a request is a write when the HTTP method is in
+        ``config.write_methods`` *and* the path starts with one of
+        ``config.write_paths``.
+        """
+        return method.upper() in {
+            m.upper() for m in config.write_methods
+        } and any(path.startswith(p) for p in config.write_paths)
+
+    @classmethod
+    def extract_signal_context(
+        cls, path: str, headers: dict[str, str], body_bytes: bytes
+    ) -> tuple[str, str]:
+        """Return ``(source_id, raw_content)`` for Signal construction.
+
+        For Mem0 mode the agent identity comes from the ``X-Agent-ID`` header
+        and ``raw_content`` is the request body decoded as UTF-8.
+        """
+        source_id = headers.get("X-Agent-ID", "unknown")
+        raw_content = body_bytes.decode("utf-8", errors="replace")
+        return source_id, raw_content
