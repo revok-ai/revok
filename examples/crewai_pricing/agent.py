@@ -37,10 +37,9 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 import aiohttp
-from crewai import Agent, Crew, Process, Task
+from crewai import Agent, Crew, LLM, Process, Task
 from crewai.tools import BaseTool
 from langchain_core.callbacks.base import BaseCallbackHandler
-from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from pydantic import BaseModel, Field, PrivateAttr
 
 import database as db_module
@@ -56,28 +55,23 @@ _PRICE_RE = re.compile(r"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)")
 
 
 def _build_llm(streaming: bool = False, callbacks: list | None = None) -> Any:
-    """Return AzureChatOpenAI or ChatOpenAI based on environment variables."""
+    """Return a crewai.LLM configured for Azure OpenAI or plain OpenAI."""
     az_key = os.getenv("AZURE_OPENAI_API_KEY", "")
     az_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    kwargs: dict[str, Any] = {
-        "temperature": 0.3,
-        "max_tokens": 200,
-        "streaming": streaming,
-    }
-    if callbacks:
-        kwargs["callbacks"] = callbacks
     if az_key and az_endpoint:
-        return AzureChatOpenAI(
-            azure_deployment=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini"),
-            azure_endpoint=az_endpoint.rstrip("/"),
+        return LLM(
+            model=f"azure/{os.getenv('AZURE_OPENAI_LLM_DEPLOYMENT', 'gpt-4o-mini')}",
             api_key=az_key,
+            base_url=az_endpoint.rstrip("/"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
-            **kwargs,
+            temperature=0.3,
+            max_tokens=200,
         )
-    return ChatOpenAI(
+    return LLM(
         model=os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY", ""),
-        **kwargs,
+        temperature=0.3,
+        max_tokens=200,
     )
 
 

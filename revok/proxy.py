@@ -33,7 +33,7 @@ import aiohttp
 import aiohttp.hdrs
 import aiohttp.web
 
-from revok.adapters import _REGISTRY, build_adapter
+from revok.adapters import AdapterClass, _REGISTRY, build_adapter
 from revok.config import Config
 from revok.entity_matcher import EntityMatcher
 from revok.interfaces import StateStore
@@ -96,7 +96,7 @@ def build_app(
         :class:`aiohttp.web.Application` ready for
         :class:`aiohttp.web.AppRunner`.
     """
-    adapter_cls = _REGISTRY[config.adapter_type]
+    adapter_cls: AdapterClass = _REGISTRY[config.adapter_type]
 
     _bus = bus if bus is not None else AsyncioQueueBus()
 

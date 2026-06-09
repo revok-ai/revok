@@ -157,18 +157,16 @@ class Mem0Adapter:
             self._closed = True
 
     @classmethod
-    def is_write_request(
-        cls, method: str, path: str, config: UpstreamConfig
-    ) -> bool:
+    def is_write_request(cls, method: str, path: str, config: UpstreamConfig) -> bool:
         """Return True if this request should trigger the enrichment pipeline.
 
         For Mem0 mode a request is a write when the HTTP method is in
         ``config.write_methods`` *and* the path starts with one of
         ``config.write_paths``.
         """
-        return method.upper() in {
-            m.upper() for m in config.write_methods
-        } and any(path.startswith(p) for p in config.write_paths)
+        return method.upper() in {m.upper() for m in config.write_methods} and any(
+            path.startswith(p) for p in config.write_paths
+        )
 
     @classmethod
     def extract_signal_context(

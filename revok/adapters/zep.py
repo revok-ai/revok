@@ -42,9 +42,7 @@ _502_BODY: bytes = json.dumps(
 _502_HEADERS: dict[str, str] = {"Content-Type": "application/json"}
 
 # Anchored regex for the Zep CE session-memory write endpoint.
-_SESSION_MEMORY_RE: re.Pattern[str] = re.compile(
-    r"^/api/v1/sessions/([^/]+)/memory$"
-)
+_SESSION_MEMORY_RE: re.Pattern[str] = re.compile(r"^/api/v1/sessions/([^/]+)/memory$")
 
 
 def _extract_session_id(path: str) -> str | None:
@@ -79,9 +77,7 @@ class ZepAdapter:
         _closed: Whether ``close()`` has already been called.
     """
 
-    def __init__(
-        self, config: UpstreamConfig, session: aiohttp.ClientSession
-    ) -> None:
+    def __init__(self, config: UpstreamConfig, session: aiohttp.ClientSession) -> None:
         """Initialise the adapter.
 
         Args:
@@ -191,19 +187,16 @@ class ZepAdapter:
             self._closed = True
 
     @classmethod
-    def is_write_request(
-        cls, method: str, path: str, config: UpstreamConfig
-    ) -> bool:
+    def is_write_request(cls, method: str, path: str, config: UpstreamConfig) -> bool:
         """Return True if this request should trigger the enrichment pipeline.
 
         For Zep mode a request is a write when the path is the exact
         session-memory endpoint *and* the HTTP method is in
         ``config.write_methods``.
         """
-        return (
-            _extract_session_id(path) is not None
-            and method.upper() in {m.upper() for m in config.write_methods}
-        )
+        return _extract_session_id(path) is not None and method.upper() in {
+            m.upper() for m in config.write_methods
+        }
 
     @classmethod
     def extract_signal_context(
@@ -222,9 +215,8 @@ class ZepAdapter:
         try:
             if body_bytes:
                 parsed = json.loads(body_bytes)
-                if (
-                    isinstance(parsed, dict)
-                    and isinstance(parsed.get("messages"), list)
+                if isinstance(parsed, dict) and isinstance(
+                    parsed.get("messages"), list
                 ):
                     raw_content = " ".join(
                         str(m["content"])

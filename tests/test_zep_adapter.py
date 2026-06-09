@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -146,6 +147,7 @@ async def test_zep_write_emits_debug_log(caplog: pytest.LogCaptureFixture) -> No
 
     mock_resp = AsyncMock()
     mock_resp.status = 200
+
     mock_resp.read = AsyncMock(return_value=b"{}")
     mock_resp.headers = {}
     mock_cm = MagicMock()
@@ -188,3 +190,79 @@ async def test_close_is_idempotent() -> None:
     await adapter.close()  # second call must be no-op
 
     mock_session.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# ZepAdapter.is_write_request classmethod
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method,path,expected",
+    [
+        ("POST", "/api/v1/sessions/abc/memory", True),
+        ("post", "/api/v1/sessions/abc/memory", True),   # case-insensitive
+        ("GET",  "/api/v1/sessions/abc/memory", False),   # GET not in write_methods
+        ("POST", "/api/v1/sessions/",           False),   # no session ID
+        ("POST", "/api/v1/other",               False),   # unrelated path
+    ],
+)
+def test_zep_is_write_request(method: str, path: str, expected: bool) -> None:
+    config = UpstreamConfig(url="http://zep:8001", write_methods=["POST"])
+    assert ZepAdapter.is_write_request(method, path, config) is expected
+
+
+# ---------------------------------------------------------------------------
+# ZepAdapter.extract_signal_context classmethod
+# ---------------------------------------------------------------------------
+
+
+def test_zep_extract_signal_context_uses_session_id_as_source() -> None:
+    """source_id is the session ID extracted from the path."""
+    body = json.dumps(
+        {"messages": [{"role": "user", "content": "hello"}]}
+    ).encode()
+    source_id, raw_content = ZepAdapter.extract_signal_context(
+        "/api/v1/sessions/sess-99/memory", {}, body
+    )
+    assert source_id == "sess-99"
+
+
+def test_zep_extract_signal_context_parses_messages_content() -> None:
+    """raw_content joins all messages[].content values."""
+    body = json.dumps(
+        {
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "World"},
+            ]
+        }
+    ).encode()
+    _, raw_content = ZepAdapter.extract_signal_context(
+        "/api/v1/sessions/s1/memory", {}, body
+    )
+    assert "Hello" in raw_content
+    assert "World" in raw_content
+
+
+def test_zep_extract_signal_context_fallback_to_x_agent_id() -> None:
+    """When path has no session, X-Agent-ID header is used as source_id."""
+    source_id, _ = ZepAdapter.extract_signal_context(
+        "/api/v1/other", {"X-Agent-ID": "agent-x"}, b"{}"
+    )
+    assert source_id == "agent-x"
+
+
+def test_zep_extract_signal_context_fallback_to_unknown() -> None:
+    """source_id is 'unknown' when path has no session and no X-Agent-ID."""
+    source_id, _ = ZepAdapter.extract_signal_context("/api/v1/other", {}, b"{}")
+    assert source_id == "unknown"
+
+
+def test_zep_extract_signal_context_raw_fallback_on_bad_json() -> None:
+    """raw_content is the raw UTF-8 body when JSON is malformed."""
+    raw_bytes = b"not json at all"
+    _, raw_content = ZepAdapter.extract_signal_context(
+        "/api/v1/sessions/s1/memory", {}, raw_bytes
+    )
+    assert raw_content == "not json at all"

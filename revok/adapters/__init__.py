@@ -7,7 +7,10 @@ To add a new adapter:
    plus ``is_write_request()`` and ``extract_signal_context()`` classmethods.
 2. Register it in ``_REGISTRY`` below.  No other file needs to change.
 """
+
 from __future__ import annotations
+
+from typing import Protocol
 
 import aiohttp
 
@@ -16,11 +19,35 @@ from revok.adapters.zep import ZepAdapter
 from revok.config import UpstreamConfig
 from revok.interfaces import MemoryAdapter
 
+
+class AdapterClass(Protocol):
+    """Structural type for adapter classes registered in ``_REGISTRY``.
+
+    Every registered adapter class must expose these two classmethods so that
+    ``proxy.py`` can delegate write-detection and signal normalisation without
+    branching on adapter type.
+    """
+
+    def __call__(
+        self, config: UpstreamConfig, session: aiohttp.ClientSession
+    ) -> MemoryAdapter: ...
+
+    @classmethod
+    def is_write_request(
+        cls, method: str, path: str, config: UpstreamConfig
+    ) -> bool: ...
+
+    @classmethod
+    def extract_signal_context(
+        cls, path: str, headers: dict[str, str], body_bytes: bytes
+    ) -> tuple[str, str]: ...
+
+
 # Registry maps adapter_type string → adapter class.
 # build_app() resolves the class at startup; _handle() never branches on type.
-_REGISTRY: dict[str, type] = {
-    "mem0": Mem0Adapter,
-    "zep": ZepAdapter,
+_REGISTRY: dict[str, AdapterClass] = {
+    "mem0": Mem0Adapter,  # type: ignore[dict-item]
+    "zep": ZepAdapter,  # type: ignore[dict-item]
 }
 
 
@@ -45,8 +72,7 @@ def build_adapter(
     cls = _REGISTRY.get(adapter_type)
     if cls is None:
         raise ValueError(
-            f"Unknown adapter_type: {adapter_type!r}. "
-            f"Available: {sorted(_REGISTRY)}"
+            f"Unknown adapter_type: {adapter_type!r}. Available: {sorted(_REGISTRY)}"
         )
     return cls(config, session)  # type: ignore[return-value]
 

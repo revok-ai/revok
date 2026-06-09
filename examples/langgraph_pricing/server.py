@@ -17,7 +17,7 @@ import aiohttp
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, Query
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import database as db_module
@@ -188,13 +188,6 @@ async def index() -> JSONResponse:
             },
         }
     )
-
-
-@app.get("/calculator")
-async def calculator() -> HTMLResponse:
-    """Serve the standalone ROI calculator page."""
-    content = (APP_DIR / "calculator.html").read_text(encoding="utf-8")
-    return HTMLResponse(content=content, media_type="text/html; charset=utf-8")
 
 
 @app.get("/state")
