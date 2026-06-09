@@ -80,7 +80,7 @@ class Mem0Adapter:
             :class:`~revok.models.MemoryAdapterResponse` from Mem0.
             Never raises on upstream HTTP or connection errors.
         """
-        url = self._config.mem0_url.rstrip("/") + http_path
+        url = self._config.url.rstrip("/") + http_path
         body_bytes = json.dumps(payload.to_upstream_dict()).encode()
         try:
             async with self._session.post(
@@ -118,10 +118,10 @@ class Mem0Adapter:
             :class:`~revok.models.MemoryAdapterResponse` from Mem0.
             Never raises on upstream HTTP or connection errors.
         """
-        url = self._config.mem0_url.rstrip("/") + signal.http_path
+        url = self._config.url.rstrip("/") + signal.http_path
         headers = dict(signal.headers)
         # Rewrite Host to upstream host per proxy-api.md §Headers
-        parsed = urllib.parse.urlparse(self._config.mem0_url)
+        parsed = urllib.parse.urlparse(self._config.url)
         headers["Host"] = parsed.netloc
 
         body = signal.original_body if signal.original_body else None

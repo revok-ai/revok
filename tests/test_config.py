@@ -19,7 +19,7 @@ server:
   startup_timeout_seconds: 10
 
 upstream:
-  mem0_url: "http://localhost:8000"
+  url: "http://localhost:8000"
   write_methods: ["POST"]
   write_paths: ["/v1/memories"]
 
@@ -58,11 +58,11 @@ class TestLoadConfigValid:
 
     def test_upstream_url_stripped_of_trailing_slash(self, tmp_path: Path):
         yaml_content = VALID_YAML.replace(
-            'mem0_url: "http://localhost:8000"',
-            'mem0_url: "http://localhost:8000/"',
+            'url: "http://localhost:8000"',
+            'url: "http://localhost:8000/"',
         )
         cfg = load_config(_write_yaml(tmp_path, yaml_content))
-        assert not cfg.upstream.mem0_url.endswith("/")
+        assert not cfg.upstream.url.endswith("/")
 
     def test_write_methods_uppercased(self, tmp_path: Path):
         yaml_content = VALID_YAML.replace(
@@ -133,9 +133,9 @@ class TestLoadConfigMissingKeys:
         with pytest.raises(ConfigError, match="server"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_missing_upstream_mem0_url(self, tmp_path: Path):
-        yaml = VALID_YAML.replace('  mem0_url: "http://localhost:8000"\n', "")
-        with pytest.raises(ConfigError, match="mem0_url"):
+    def test_missing_upstream_url(self, tmp_path: Path):
+        yaml = VALID_YAML.replace('  url: "http://localhost:8000"\n', "")
+        with pytest.raises(ConfigError, match="url"):
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_missing_entity_matcher_is_valid(self, tmp_path: Path):
@@ -175,11 +175,11 @@ class TestLoadConfigValidationRules:
         with pytest.raises(ConfigError, match="score_cap"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_invalid_mem0_url(self, tmp_path: Path):
+    def test_invalid_upstream_url(self, tmp_path: Path):
         yaml = VALID_YAML.replace(
-            '  mem0_url: "http://localhost:8000"', '  mem0_url: "not-a-url"'
+            '  url: "http://localhost:8000"', '  url: "not-a-url"'
         )
-        with pytest.raises(ConfigError, match="mem0_url"):
+        with pytest.raises(ConfigError, match="url"):
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_invalid_regex_pattern(self, tmp_path: Path):
@@ -244,8 +244,8 @@ server:
 
 adapter_type: zep
 
-zep:
-  zep_url: "http://localhost:8001"
+upstream:
+  url: "http://localhost:8001"
   write_methods: ["POST"]
 
 entity_matcher:
@@ -273,33 +273,29 @@ class TestLoadConfigZepMode:
         """A complete Zep config loads without error."""
         cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
         assert cfg.adapter_type == "zep"
-        assert cfg.zep is not None
-        assert cfg.zep.zep_url == "http://localhost:8001"
-        assert cfg.zep.write_methods == ["POST"]
-        assert cfg.zep.write_paths == []
+        assert cfg.upstream.url == "http://localhost:8001"
+        assert cfg.upstream.write_methods == ["POST"]
+        assert cfg.upstream.write_paths == []
 
     def test_zep_url_trailing_slash_stripped(self, tmp_path: Path) -> None:
         yaml = ZEP_BASE_YAML.replace(
-            'zep_url: "http://localhost:8001"',
-            'zep_url: "http://localhost:8001/"',
+            'url: "http://localhost:8001"',
+            'url: "http://localhost:8001/"',
         )
         cfg = load_config(_write_yaml(tmp_path, yaml))
-        assert cfg.zep is not None
-        assert not cfg.zep.zep_url.endswith("/")
+        assert not cfg.upstream.url.endswith("/")
 
     def test_zep_write_methods_uppercased(self, tmp_path: Path) -> None:
         yaml = ZEP_BASE_YAML.replace(
             'write_methods: ["POST"]', 'write_methods: ["post"]'
         )
         cfg = load_config(_write_yaml(tmp_path, yaml))
-        assert cfg.zep is not None
-        assert cfg.zep.write_methods == ["POST"]
+        assert cfg.upstream.write_methods == ["POST"]
 
     def test_zep_write_paths_defaults_to_empty(self, tmp_path: Path) -> None:
         """write_paths is optional in Zep mode and defaults to []."""
         cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
-        assert cfg.zep is not None
-        assert cfg.zep.write_paths == []
+        assert cfg.upstream.write_paths == []
 
     def test_zep_write_paths_loaded_when_present(self, tmp_path: Path) -> None:
         yaml = ZEP_BASE_YAML.replace(
@@ -307,33 +303,32 @@ class TestLoadConfigZepMode:
             'write_methods: ["POST"]\n  write_paths: ["/api/v1/sessions"]',
         )
         cfg = load_config(_write_yaml(tmp_path, yaml))
-        assert cfg.zep is not None
-        assert cfg.zep.write_paths == ["/api/v1/sessions"]
+        assert cfg.upstream.write_paths == ["/api/v1/sessions"]
 
-    def test_missing_zep_section_raises(self, tmp_path: Path) -> None:
-        """adapter_type: zep without a zep: section raises ConfigError."""
+    def test_missing_upstream_section_raises_in_zep_mode(self, tmp_path: Path) -> None:
+        """adapter_type: zep without an upstream: section raises ConfigError."""
         yaml = ZEP_BASE_YAML.replace(
-            "zep:\n  zep_url: \"http://localhost:8001\"\n  write_methods: [\"POST\"]\n",
+            "upstream:\n  url: \"http://localhost:8001\"\n  write_methods: [\"POST\"]\n",
             "",
         )
-        with pytest.raises(ConfigError, match="zep"):
+        with pytest.raises(ConfigError, match="upstream"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_missing_zep_url_raises(self, tmp_path: Path) -> None:
-        """zep: section without zep_url raises ConfigError."""
+    def test_missing_upstream_url_raises_in_zep_mode(self, tmp_path: Path) -> None:
+        """upstream: section without url raises ConfigError."""
         yaml = ZEP_BASE_YAML.replace(
-            '  zep_url: "http://localhost:8001"\n', ""
+            '  url: "http://localhost:8001"\n', ""
         )
-        with pytest.raises(ConfigError, match="zep_url"):
+        with pytest.raises(ConfigError, match="url"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_invalid_zep_url_raises(self, tmp_path: Path) -> None:
-        """A non-HTTP zep_url raises ConfigError."""
+    def test_invalid_upstream_url_raises_in_zep_mode(self, tmp_path: Path) -> None:
+        """A non-HTTP upstream.url raises ConfigError."""
         yaml = ZEP_BASE_YAML.replace(
-            'zep_url: "http://localhost:8001"',
-            'zep_url: "not-a-url"',
+            'url: "http://localhost:8001"',
+            'url: "not-a-url"',
         )
-        with pytest.raises(ConfigError, match="zep_url"):
+        with pytest.raises(ConfigError, match="url"):
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_invalid_adapter_type_raises(self, tmp_path: Path) -> None:
@@ -348,12 +343,10 @@ class TestLoadConfigZepMode:
         """No adapter_type key → defaults to 'mem0'."""
         cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
         assert cfg.adapter_type == "mem0"
-        assert cfg.zep is None
 
-    def test_zep_upstream_section_optional(self, tmp_path: Path) -> None:
-        """In Zep mode, the upstream: section may be omitted."""
-        cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
-        # upstream stub was injected; zep config is the real config
-        assert cfg.zep is not None
-        assert cfg.adapter_type == "zep"
+    def test_mem0_write_paths_required(self, tmp_path: Path) -> None:
+        """In Mem0 mode, upstream.write_paths must be non-empty."""
+        yaml = VALID_YAML.replace("  write_paths: [\"/v1/memories\"]\n", "")
+        with pytest.raises(ConfigError, match="write_paths"):
+            load_config(_write_yaml(tmp_path, yaml))
 

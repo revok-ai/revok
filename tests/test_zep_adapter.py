@@ -12,7 +12,7 @@ import aiohttp
 import pytest
 
 from revok.adapters.zep import ZepAdapter, _extract_session_id
-from revok.config import ZepUpstreamConfig
+from revok.config import UpstreamConfig
 from revok.interfaces import MemoryAdapter
 from revok.models import EnrichedPayload, Signal
 
@@ -62,7 +62,7 @@ def test_extract_session_id_no_match(path: str) -> None:
 
 def test_zep_adapter_implements_memory_adapter_protocol() -> None:
     """ZepAdapter satisfies the MemoryAdapter Protocol at runtime."""
-    config = ZepUpstreamConfig(zep_url="http://localhost:8001", write_methods=["POST"])
+    config = UpstreamConfig(url="http://localhost:8001", write_methods=["POST"])
     mock_session = MagicMock(spec=aiohttp.ClientSession)
     adapter = ZepAdapter(config, mock_session)
     assert isinstance(adapter, MemoryAdapter)
@@ -75,7 +75,7 @@ def test_zep_adapter_implements_memory_adapter_protocol() -> None:
 
 async def test_write_502_on_connector_error() -> None:
     """write() wraps a ClientConnectorError in a 502 MemoryAdapterResponse."""
-    config = ZepUpstreamConfig(zep_url="http://zep:8001", write_methods=["POST"])
+    config = UpstreamConfig(url="http://zep:8001", write_methods=["POST"])
     mock_session = MagicMock(spec=aiohttp.ClientSession)
 
     mock_cm = MagicMock()
@@ -107,7 +107,7 @@ async def test_write_502_on_connector_error() -> None:
 
 async def test_forward_502_on_connector_error() -> None:
     """forward() wraps a ClientConnectorError in a 502 MemoryAdapterResponse."""
-    config = ZepUpstreamConfig(zep_url="http://zep:8001", write_methods=["POST"])
+    config = UpstreamConfig(url="http://zep:8001", write_methods=["POST"])
     mock_session = MagicMock(spec=aiohttp.ClientSession)
 
     mock_cm = MagicMock()
@@ -141,7 +141,7 @@ async def test_forward_502_on_connector_error() -> None:
 
 async def test_zep_write_emits_debug_log(caplog: pytest.LogCaptureFixture) -> None:
     """write() emits a DEBUG record with session_id and http_path in its extra fields."""
-    config = ZepUpstreamConfig(zep_url="http://zep:8001", write_methods=["POST"])
+    config = UpstreamConfig(url="http://zep:8001", write_methods=["POST"])
     mock_session = MagicMock(spec=aiohttp.ClientSession)
 
     mock_resp = AsyncMock()
@@ -179,7 +179,7 @@ async def test_zep_write_emits_debug_log(caplog: pytest.LogCaptureFixture) -> No
 
 async def test_close_is_idempotent() -> None:
     """Calling close() multiple times does not raise and closes session only once."""
-    config = ZepUpstreamConfig(zep_url="http://zep:8001", write_methods=["POST"])
+    config = UpstreamConfig(url="http://zep:8001", write_methods=["POST"])
     mock_session = MagicMock(spec=aiohttp.ClientSession)
     mock_session.close = AsyncMock()
 

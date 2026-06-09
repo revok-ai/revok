@@ -102,8 +102,8 @@ def build_app(
     )
     is_zep_mode: bool = config.adapter_type == "zep"
     zep_write_methods: frozenset[str] = (
-        frozenset(m.upper() for m in config.zep.write_methods)
-        if is_zep_mode and config.zep is not None
+        frozenset(m.upper() for m in config.upstream.write_methods)
+        if is_zep_mode
         else frozenset()
     )
 
@@ -283,8 +283,7 @@ def build_app(
 
         async with aiohttp.ClientSession() as session:
             if is_zep_mode:
-                assert config.zep is not None
-                _adapter: Mem0Adapter | ZepAdapter = ZepAdapter(config.zep, session)
+                _adapter: Mem0Adapter | ZepAdapter = ZepAdapter(config.upstream, session)
                 is_write = (
                     _zep_extract_session_id(request.path) is not None
                     and signal.http_method.upper() in zep_write_methods

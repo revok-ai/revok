@@ -14,8 +14,8 @@ server:
   max_signal_size_bytes: 1048576
 
 upstream:
-  # Base URL of the Mem0 instance to forward requests to.
-  mem0_url: "http://localhost:8000"
+  # Base URL of the upstream memory service (Mem0 or Zep CE) to forward requests to.
+  url: "http://localhost:8000"
   # HTTP methods that trigger the enrichment pipeline.
   write_methods:
     - "POST"

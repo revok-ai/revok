@@ -37,7 +37,7 @@ def _config_with_upstream(mem0_url: str, tmp_path: Path) -> Config:
     return Config(
         server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
         upstream=UpstreamConfig(
-            mem0_url=mem0_url,
+            url=mem0_url,
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),
@@ -67,7 +67,7 @@ def _config_with_size_limit(mem0_url: str, tmp_path: Path, max_bytes: int) -> Co
             max_signal_size_bytes=max_bytes,
         ),
         upstream=UpstreamConfig(
-            mem0_url=mem0_url,
+            url=mem0_url,
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),
@@ -488,7 +488,7 @@ async def test_get_entity_returns_time_recovered_score(tmp_path: Path) -> None:
     config = Config(
         server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
         upstream=UpstreamConfig(
-            mem0_url="http://127.0.0.1:1",
+            url="http://127.0.0.1:1",
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),

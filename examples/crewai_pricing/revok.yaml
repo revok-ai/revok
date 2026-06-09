@@ -5,7 +5,7 @@ server:
   max_signal_size_bytes: 1048576
 
 upstream:
-  mem0_url: "http://mem0:8000"
+  url: "http://mem0:8000"
   write_methods:
     - "POST"
     - "PUT"

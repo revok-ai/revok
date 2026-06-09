@@ -20,7 +20,6 @@ from revok.config import (
     ServerConfig,
     StateStoreConfig,
     UpstreamConfig,
-    ZepUpstreamConfig,
 )
 from revok.entity_matcher import EntityMatcher
 from revok.proxy import build_app
@@ -43,9 +42,8 @@ def _zep_config(
     return Config(
         server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
         upstream=UpstreamConfig(
-            mem0_url="http://unused",
-            write_methods=[],
-            write_paths=[],
+            url=zep_url,
+            write_methods=write_methods if write_methods is not None else ["POST"],
         ),
         entity_matcher=EntityMatcherConfig(
             patterns=[PatternConfig(name="person", regex=r"\b[A-Z][a-z]+\b")]
@@ -61,10 +59,6 @@ def _zep_config(
         ),
         logging=LoggingConfig(level="WARNING", format="%(levelname)s %(message)s"),
         adapter_type="zep",
-        zep=ZepUpstreamConfig(
-            zep_url=zep_url,
-            write_methods=write_methods if write_methods is not None else ["POST"],
-        ),
     )
 
 
@@ -73,7 +67,7 @@ def _mem0_config(mem0_url: str, tmp_path: Path) -> Config:
     return Config(
         server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
         upstream=UpstreamConfig(
-            mem0_url=mem0_url,
+            url=mem0_url,
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),

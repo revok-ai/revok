@@ -56,31 +56,17 @@ class ServerConfig:
 
 @dataclass(frozen=True)
 class UpstreamConfig:
-    """Mem0 upstream target and write-detection settings.
+    """Upstream target and write-detection settings (Mem0 and Zep).
 
     Attributes:
-        mem0_url: Validated HTTP/HTTPS base URL.
+        url: Validated HTTP/HTTPS base URL.
         write_methods: HTTP methods that trigger enrichment (e.g., ``["POST"]``).
         write_paths: URL path prefixes that trigger enrichment.
+            Required (non-empty) for Mem0 mode. Optional for Zep mode
+            (the active gate is the session-path anchor in the proxy).
     """
 
-    mem0_url: str
-    write_methods: list[str]
-    write_paths: list[str]
-
-
-@dataclass(frozen=True)
-class ZepUpstreamConfig:
-    """Zep CE upstream target and write-detection settings.
-
-    Attributes:
-        zep_url: Validated HTTP/HTTPS base URL for the Zep CE instance.
-        write_methods: HTTP methods that trigger entity enrichment.
-        write_paths: Informational path list.  The active write gate is the
-            session-path anchor in the proxy, so this defaults to ``[]``.
-    """
-
-    zep_url: str
+    url: str
     write_methods: list[str]
     write_paths: list[str] = field(default_factory=list)
 
@@ -200,7 +186,6 @@ class Config:
     state_store: StateStoreConfig
     logging: LoggingConfig
     adapter_type: str = "mem0"
-    zep: ZepUpstreamConfig | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -304,37 +289,34 @@ def load_config(path: str) -> Config:
     )
 
     # --- upstream ---
-    # In Zep mode upstream is optional; a stub is built when the section is absent.
     up_raw = data.get("upstream")
-    if up_raw is None and adapter_type == "mem0":
+    if up_raw is None:
         raise ConfigError("Missing required config key: upstream")
-    if up_raw is not None:
-        mem0_url = _require(up_raw, "mem0_url", context="upstream")
-        write_methods_up = _require(up_raw, "write_methods", context="upstream")
-        write_paths_up = _require(up_raw, "write_paths", context="upstream")
+    if not isinstance(up_raw, dict):
+        raise ConfigError("'upstream' must be a YAML mapping.")
 
-        parsed_up = urllib.parse.urlparse(str(mem0_url))
-        if parsed_up.scheme not in ("http", "https") or not parsed_up.netloc:
-            raise ConfigError(
-                f"upstream.mem0_url must be a valid HTTP/HTTPS URL; got '{mem0_url}'."
-            )
-        if not isinstance(write_methods_up, list) or not write_methods_up:
-            raise ConfigError("upstream.write_methods must be a non-empty list.")
-        if not isinstance(write_paths_up, list) or not write_paths_up:
-            raise ConfigError("upstream.write_paths must be a non-empty list.")
+    up_url = _require(up_raw, "url", context="upstream")
+    write_methods_up = _require(up_raw, "write_methods", context="upstream")
 
-        upstream_cfg = UpstreamConfig(
-            mem0_url=str(mem0_url).rstrip("/"),
-            write_methods=[str(m).upper() for m in write_methods_up],
-            write_paths=[str(p) for p in write_paths_up],
+    parsed_up = urllib.parse.urlparse(str(up_url))
+    if parsed_up.scheme not in ("http", "https") or not parsed_up.netloc:
+        raise ConfigError(
+            f"upstream.url must be a valid HTTP/HTTPS URL; got '{up_url}'."
         )
-    else:
-        # Zep mode with no upstream section: build a stub
-        upstream_cfg = UpstreamConfig(
-            mem0_url="http://unused",
-            write_methods=[],
-            write_paths=[],
-        )
+    if not isinstance(write_methods_up, list) or not write_methods_up:
+        raise ConfigError("upstream.write_methods must be a non-empty list.")
+
+    write_paths_up = up_raw.get("write_paths") or []
+    if not isinstance(write_paths_up, list):
+        raise ConfigError("upstream.write_paths must be a list.")
+    if adapter_type == "mem0" and not write_paths_up:
+        raise ConfigError("upstream.write_paths must be a non-empty list.")
+
+    upstream_cfg = UpstreamConfig(
+        url=str(up_url).rstrip("/"),
+        write_methods=[str(m).upper() for m in write_methods_up],
+        write_paths=[str(p) for p in write_paths_up],
+    )
 
     # --- entity_matcher (optional) ---
     # Absent → header-only mode; present → validate entities and/or patterns.
@@ -436,34 +418,6 @@ def load_config(path: str) -> Config:
 
     logging_cfg = LoggingConfig(level=str(level), format=str(fmt))
 
-    # --- zep ---
-    zep_cfg: ZepUpstreamConfig | None = None
-    if adapter_type == "zep":
-        zep_raw = data.get("zep")
-        if not isinstance(zep_raw, dict):
-            raise ConfigError(
-                "A 'zep' section is required when adapter_type is 'zep'."
-            )
-        zep_url = zep_raw.get("zep_url")
-        if not zep_url:
-            raise ConfigError("zep.zep_url is required when adapter_type is 'zep'.")
-        parsed_zep = urllib.parse.urlparse(str(zep_url))
-        if parsed_zep.scheme not in ("http", "https") or not parsed_zep.netloc:
-            raise ConfigError(
-                f"zep.zep_url must be a valid HTTP/HTTPS URL; got '{zep_url}'."
-            )
-        zep_wm = zep_raw.get("write_methods") or []
-        if not isinstance(zep_wm, list) or not zep_wm:
-            raise ConfigError("zep.write_methods must be a non-empty list.")
-        zep_wp = zep_raw.get("write_paths") or []
-        if not isinstance(zep_wp, list):
-            raise ConfigError("zep.write_paths must be a list.")
-        zep_cfg = ZepUpstreamConfig(
-            zep_url=str(zep_url).rstrip("/"),
-            write_methods=[str(m).upper() for m in zep_wm],
-            write_paths=[str(p) for p in zep_wp],
-        )
-
     return Config(
         server=server_cfg,
         upstream=upstream_cfg,
@@ -472,5 +426,4 @@ def load_config(path: str) -> Config:
         state_store=state_store_cfg,
         logging=logging_cfg,
         adapter_type=adapter_type,
-        zep=zep_cfg,
     )

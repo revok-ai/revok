@@ -31,7 +31,7 @@ import urllib.parse
 
 import aiohttp
 
-from revok.config import ZepUpstreamConfig
+from revok.config import UpstreamConfig
 from revok.models import EnrichedPayload, MemoryAdapterResponse, Signal
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ class ZepAdapter:
     """
 
     def __init__(
-        self, config: ZepUpstreamConfig, session: aiohttp.ClientSession
+        self, config: UpstreamConfig, session: aiohttp.ClientSession
     ) -> None:
         """Initialise the adapter.
 
@@ -116,7 +116,7 @@ class ZepAdapter:
             "Intercepted Zep write",
             extra={"session_id": session_id, "http_path": http_path},
         )
-        url = self._config.zep_url.rstrip("/") + http_path
+        url = self._config.url.rstrip("/") + http_path
         try:
             async with self._session.post(
                 url,
@@ -153,9 +153,9 @@ class ZepAdapter:
             :class:`~revok.models.MemoryAdapterResponse` from Zep CE.
             Never raises on upstream HTTP or connection errors.
         """
-        url = self._config.zep_url.rstrip("/") + signal.http_path
+        url = self._config.url.rstrip("/") + signal.http_path
         headers = dict(signal.headers)
-        parsed = urllib.parse.urlparse(self._config.zep_url)
+        parsed = urllib.parse.urlparse(self._config.url)
         headers["Host"] = parsed.netloc
 
         body = signal.original_body if signal.original_body else None
