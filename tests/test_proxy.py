@@ -519,7 +519,8 @@ async def test_get_entity_returns_time_recovered_score(tmp_path: Path) -> None:
         old_record = EntityRecord(
             entity_key="testentity",
             score=frozen_score,
-            last_seen=old_time,
+            valid_time=old_time,
+            transaction_time=old_time,
             signal_count=1,
             pattern_name="test",
         )

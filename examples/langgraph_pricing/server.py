@@ -729,12 +729,21 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
     _demo_state["active_entity_key"] = detected_entity_key
 
     async with aiohttp.ClientSession() as session:
+        # Run both agents in parallel so their answers arrive together.
         state_module.add_event(
-            _demo_state, f"Asking agent WITHOUT Revok about {product}…", kind="info"
+            _demo_state,
+            f"Asking both agents about {product} (running in parallel)…",
+            kind="info",
         )
         state_module.save(_demo_state)
-        ans_without = await _without_revok.answer_budget_question(
-            session, product, None, question=question
+
+        ans_without, ans_with = await asyncio.gather(
+            _without_revok.answer_budget_question(
+                session, product, None, question=question
+            ),
+            _with_revok.answer_budget_question(
+                session, product, detected_entity_key, question=question
+            ),
         )
 
         if ans_without.memory_quote:
@@ -752,15 +761,6 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
             "re_verified": ans_without.re_verified,
             "live_price": ans_without.live_price,
         }
-        state_module.save(_demo_state)
-
-        state_module.add_event(
-            _demo_state, f"Asking agent WITH Revok about {product}…", kind="info"
-        )
-        state_module.save(_demo_state)
-        ans_with = await _with_revok.answer_budget_question(
-            session, product, detected_entity_key, question=question
-        )
 
         if ans_with.re_verified and ans_with.live_price is not None:
             await _heal_pricing_memory(

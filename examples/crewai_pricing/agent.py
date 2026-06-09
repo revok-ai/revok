@@ -309,6 +309,7 @@ class PricingSalesAgent:
         score: float | None,
         signal_count: int,
         question: str = "",
+        pre_fetched_live: str | None = None,
     ) -> str:
         score_str = f"{score:.2f}" if score is not None else "N/A"
         q = question or f"What is the current price for {product_name} per month?"
@@ -326,26 +327,47 @@ class PricingSalesAgent:
                 f'Customer question: "{q}"'
             )
         if status == "stale":
+            if pre_fetched_live:
+                live_fact = (
+                    f"\n\nVERIFIED LIVE PRICE (fetched directly from database): "
+                    f"{pre_fetched_live}\n"
+                    f"You MUST report this exact price in your answer. "
+                    f"Do NOT use memory or invent a different value.\n"
+                )
+            else:
+                live_fact = ""
             return (
                 f"Answer this question: Is {product_name} within the customer budget? "
                 f"Your memory confidence is {score_str} (STALE). "
-                f"You must use get_current_price to get the live price before answering. "
-                f"Do not use your memory for the price. "
+                f"Memory may be outdated — rely only on the verified live price below."
+                f"{live_fact}"
                 f"{no_guess_rule}"
                 f'Customer question: "{q}"'
             )
         if status == "degraded":
             return (
                 f"Answer this question: Is {product_name} within the customer budget? "
-                f"Check your memory first. Your memory confidence is {score_str} "
-                f"(DEGRADED) — add a caveat that verification is recommended. "
+                f"Use check_memory to recall what you know about {product_name}. "
+                f"Your memory confidence is {score_str} (DEGRADED) — answer from "
+                f"memory but add a caveat that verification is recommended. "
                 f"{no_guess_rule}"
                 f'Customer question: "{q}"'
             )
+        if status == "unknown":
+            # Revok has no entity yet — treat memory as fully trusted, same as
+            # the no-revok path, so the LLM isn't confused by an N/A score.
+            return (
+                f"Answer this question using your memory: Is {product_name} within "
+                f"the customer budget? Use check_memory to recall what you know. "
+                f"Answer confidently from what you remember only if memory exists. "
+                f"{no_guess_rule}"
+                f'Customer question: "{q}"'
+            )
+        # status == "fresh"
         return (
             f"Answer this question: Is {product_name} within the customer budget? "
-            f"Check your memory first. Your memory confidence is {score_str} (FRESH) — "
-            f"you can trust it. "
+            f"Use check_memory to recall what you know about {product_name}. "
+            f"Your memory confidence is {score_str} (FRESH) — you can trust it. "
             f"{no_guess_rule}"
             f'Customer question: "{q}"'
         )
@@ -366,6 +388,7 @@ class PricingSalesAgent:
         llm: Any = None,
         step_callback: Any = None,
         question: str = "",
+        pre_fetched_live: str | None = None,
     ) -> Crew:
         pricing_advisor = Agent(
             role="Pricing Sales Advisor",
@@ -385,7 +408,8 @@ class PricingSalesAgent:
         )
         budget_task = Task(
             description=self._build_task_description(
-                product_name, status, score, signal_count, question=question
+                product_name, status, score, signal_count,
+                question=question, pre_fetched_live=pre_fetched_live,
             ),
             expected_output=(
                 "A clear pricing recommendation with confidence level and any caveats "
@@ -459,6 +483,16 @@ class PricingSalesAgent:
 
         price_tool = self._make_price_tool()
         memory_tool = self._make_memory_tool()
+
+        # When stale, pre-fetch the live price in Python before running the crew.
+        # This injects the verified price into the task description so the LLM cannot
+        # hallucinate a value, regardless of whether it calls get_current_price itself.
+        pre_fetched_live: str | None = None
+        if status == "stale":
+            pre_fetched_live = await asyncio.to_thread(
+                price_tool._run, product_name
+            )
+
         crew = self._build_crew(
             product_name,
             status,
@@ -467,17 +501,20 @@ class PricingSalesAgent:
             price_tool=price_tool,
             memory_tool=memory_tool,
             question=question,
+            pre_fetched_live=pre_fetched_live,
         )
 
         result = await asyncio.to_thread(crew.kickoff)
         answer_text = result.raw if hasattr(result, "raw") else str(result)
 
-        re_verified = bool(price_tool._call_log)
+        re_verified = bool(price_tool._call_log) or (pre_fetched_live is not None)
         memory_quote = memory_tool._last_result
 
         live_price: float | None = None
-        if re_verified and price_tool._last_result:
-            matches = _PRICE_RE.findall(price_tool._last_result)
+        # Prefer the crew's own tool result; fall back to the pre-fetched value.
+        tool_result = price_tool._last_result if price_tool._call_log else pre_fetched_live
+        if tool_result:
+            matches = _PRICE_RE.findall(tool_result)
             if matches:
                 live_price = float(matches[-1].replace(",", ""))
 
@@ -578,24 +615,25 @@ class PricingSalesAgent:
                         loop,
                     )
                 elif tool_name == "get_current_price":
-                    price_matches = _PRICE_RE.findall(obs)
-                    live_p = (
-                        float(price_matches[-1].replace(",", ""))
-                        if price_matches
-                        else None
-                    )
-                    emitted["db_reverified"] = True
-                    asyncio.run_coroutine_threadsafe(
-                        queue.put(
-                            {
-                                "type": "db_reverified",
-                                "agent": agent_id,
-                                "live_price": live_p,
-                                "reason": status,
-                            }
-                        ),
-                        loop,
-                    )
+                    if not emitted.get("db_reverified"):
+                        price_matches = _PRICE_RE.findall(obs)
+                        live_p = (
+                            float(price_matches[-1].replace(",", ""))
+                            if price_matches
+                            else None
+                        )
+                        emitted["db_reverified"] = True
+                        asyncio.run_coroutine_threadsafe(
+                            queue.put(
+                                {
+                                    "type": "db_reverified",
+                                    "agent": agent_id,
+                                    "live_price": live_p,
+                                    "reason": status,
+                                }
+                            ),
+                            loop,
+                        )
             except Exception as exc:
                 _log.debug("[%s] step_callback parse error: %s", self.name, exc)
 
@@ -603,6 +641,24 @@ class PricingSalesAgent:
         price_tool = self._make_price_tool()
         memory_tool = self._make_memory_tool()
         streaming_llm = _build_llm(streaming=True, callbacks=[_TokenHandler()])
+
+        # When stale, pre-fetch the live price before the crew runs so the task
+        # description contains the verified value. This prevents the LLM from
+        # hallucinating a price even if it skips calling get_current_price.
+        pre_fetched_live: str | None = None
+        if status == "stale":
+            pre_fetched_live = await asyncio.to_thread(price_tool._run, product_name)
+            pf_matches = _PRICE_RE.findall(pre_fetched_live)
+            pf_live_price = (
+                float(pf_matches[-1].replace(",", "")) if pf_matches else None
+            )
+            emitted["db_reverified"] = True
+            yield {
+                "type": "db_reverified",
+                "agent": agent_id,
+                "live_price": pf_live_price,
+                "reason": "stale",
+            }
 
         crew = self._build_crew(
             product_name,
@@ -614,6 +670,7 @@ class PricingSalesAgent:
             llm=streaming_llm,
             step_callback=_step_callback,
             question=question,
+            pre_fetched_live=pre_fetched_live,
         )
 
         def _sync_run() -> Any:
@@ -642,10 +699,12 @@ class PricingSalesAgent:
                 "memory_count": 1,
             }
 
-        re_verified = bool(price_tool._call_log)
+        re_verified = bool(price_tool._call_log) or (pre_fetched_live is not None)
         live_price: float | None = None
-        if re_verified and price_tool._last_result:
-            matches_live = _PRICE_RE.findall(price_tool._last_result)
+        # Prefer the crew's own tool result; fall back to the pre-fetched value.
+        _live_src = price_tool._last_result if price_tool._call_log else pre_fetched_live
+        if _live_src:
+            matches_live = _PRICE_RE.findall(_live_src)
             if matches_live:
                 live_price = float(matches_live[-1].replace(",", ""))
 

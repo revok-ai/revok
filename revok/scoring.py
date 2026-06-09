@@ -92,7 +92,7 @@ class ScoringEngine:
         if existing is None:
             return max(0.0, self._score_cap - self._signal_strength)
 
-        delta_t = max(0.0, now - existing.last_seen)
+        delta_t = max(0.0, now - existing.valid_time)
         gap = self._score_cap - existing.score
         score_recovered = self._score_cap - gap * math.exp(-self._lambda * delta_t)
         return max(0.0, score_recovered - self._signal_strength)
@@ -111,6 +111,6 @@ class ScoringEngine:
             Recovered score in ``[0.0, score_cap]`` (no signal degradation
             applied).
         """
-        delta_t = max(0.0, now - record.last_seen)
+        delta_t = max(0.0, now - record.valid_time)
         gap = self._score_cap - record.score
         return self._score_cap - gap * math.exp(-self._lambda * delta_t)

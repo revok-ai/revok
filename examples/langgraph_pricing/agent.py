@@ -229,7 +229,21 @@ def _build_prompt(state: AgentState) -> tuple[str, str]:
         )
         return system, user
 
-    # fresh or unknown — trust memory
+    if status == "unknown":
+        # No Revok entity yet — treat memory as fully trusted, no score label.
+        system = (
+            "You are a confident sales agent. Answer the customer's question using "
+            "the information stored in your memory. Be concise (2-3 sentences)."
+        )
+        user = (
+            f"Product: {product}\n"
+            f"Memory: {memory}\n"
+            f'Customer question: "{question}"\n'
+            "Answer confidently from memory."
+        )
+        return system, user
+
+    # fresh — trust memory
     system = (
         "You are a confident sales agent. Your memory confidence is high — answer "
         "confidently from memory. Be concise (2-3 sentences)."

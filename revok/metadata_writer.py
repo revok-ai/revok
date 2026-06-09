@@ -69,6 +69,17 @@ async def enrich(
 
     now = time.time()
 
+    # Resolve valid_time: use signal.valid_time if set, else signal arrival time.
+    # Clamp future-dated values to now (transaction_time) and warn.
+    raw_valid_time: float = signal.valid_time if signal.valid_time is not None else now
+    if raw_valid_time > now:
+        logger.warning(
+            "valid_time %.3f is in the future (transaction_time=%.3f); clamping",
+            raw_valid_time,
+            now,
+        )
+        raw_valid_time = now
+
     # --- Step 1: parse original body ----------------------------------------
     original_body: dict[str, object] = {}
     try:
@@ -112,7 +123,8 @@ async def enrich(
             record = EntityRecord(
                 entity_key=entity.key,
                 score=new_score,
-                last_seen=now,
+                valid_time=raw_valid_time,
+                transaction_time=now,
                 signal_count=signal_count,
                 pattern_name=entity.pattern_name,
             )

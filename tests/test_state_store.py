@@ -37,7 +37,8 @@ def make_record(key: str, score: float = 0.5, signal_count: int = 1) -> EntityRe
     return EntityRecord(
         entity_key=key,
         score=score,
-        last_seen=1000.0,
+        valid_time=1000.0,
+        transaction_time=1000.0,
         signal_count=signal_count,
         pattern_name="person",
     )
@@ -144,7 +145,8 @@ async def test_decay_on_read_returns_decayed_score(tmp_path):
     record = EntityRecord(
         entity_key="alice",
         score=stored_score,
-        last_seen=now - half_life,
+        valid_time=now - half_life,
+        transaction_time=now,
         signal_count=1,
         pattern_name="person",
     )

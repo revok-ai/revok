@@ -63,7 +63,7 @@ def scorer() -> ScoringEngine:
 
 
 @pytest.fixture
-async def store(tmp_path) -> SqliteStateStore:
+async def store(tmp_path):
     cfg = StateStoreConfig(
         sqlite_path=str(tmp_path / "enrich_test.db"),
         hot_layer_max_entries=100,
