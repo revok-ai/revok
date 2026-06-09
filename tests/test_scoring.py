@@ -46,7 +46,8 @@ def make_record(score: float, last_seen: float) -> EntityRecord:
     return EntityRecord(
         entity_key="alice",
         score=score,
-        last_seen=last_seen,
+        valid_time=last_seen,
+        transaction_time=last_seen,
         signal_count=1,
         pattern_name="person",
     )

@@ -75,7 +75,8 @@ class TestEntityRecord:
         rec = EntityRecord(
             entity_key="alice smith",
             score=0.5,
-            last_seen=1000.0,
+            valid_time=1000.0,
+            transaction_time=1000.0,
             signal_count=2,
             pattern_name="person",
         )
@@ -86,7 +87,8 @@ class TestEntityRecord:
         rec = EntityRecord(
             entity_key="bob jones",
             score=0.3,
-            last_seen=2000.0,
+            valid_time=2000.0,
+            transaction_time=2000.0,
             signal_count=1,
             pattern_name="person",
         )
@@ -104,7 +106,8 @@ class TestEnrichedPayload:
         return EntityRecord(
             entity_key=key,
             score=score,
-            last_seen=1748476740.0,  # 2026-05-28T19:59:00Z (approx)
+            valid_time=1748476740.0,
+            transaction_time=1748476740.0,
             signal_count=3,
             pattern_name="person",
         )
