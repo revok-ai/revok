@@ -132,4 +132,5 @@ async def enrich(
         entities=scored_records,
         revok_version=__version__,
         processed_at=now,
+        original_bytes=signal.original_body,
     )

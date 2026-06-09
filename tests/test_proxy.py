@@ -21,7 +21,8 @@ from revok.config import (
     UpstreamConfig,
 )
 from revok.entity_matcher import EntityMatcher
-from revok.proxy import Mem0Adapter, build_app
+from revok.adapters import Mem0Adapter
+from revok.proxy import build_app
 from revok.scoring import ScoringEngine
 from revok.state_store import SqliteStateStore
 

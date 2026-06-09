@@ -230,3 +230,130 @@ class TestLoadConfigValidationRules:
         p.write_text("key: [unclosed", encoding="utf-8")
         with pytest.raises(ConfigError, match="YAML"):
             load_config(str(p))
+
+
+# ---------------------------------------------------------------------------
+# T022: Zep adapter_type config tests
+# ---------------------------------------------------------------------------
+
+ZEP_BASE_YAML = """\
+server:
+  host: "127.0.0.1"
+  port: 8080
+  startup_timeout_seconds: 10
+
+adapter_type: zep
+
+zep:
+  zep_url: "http://localhost:8001"
+  write_methods: ["POST"]
+
+entity_matcher:
+  patterns:
+    - name: "person"
+      regex: "\\\\b[A-Z][a-z]+\\\\b"
+
+scoring:
+  half_life_seconds: 86400
+  signal_strength: 0.3
+  score_cap: 1.0
+
+state_store:
+  sqlite_path: "./revok_zep.db"
+  hot_layer_max_entries: 1000
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(message)s"
+"""
+
+
+class TestLoadConfigZepMode:
+    def test_valid_zep_config_loads(self, tmp_path: Path) -> None:
+        """A complete Zep config loads without error."""
+        cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
+        assert cfg.adapter_type == "zep"
+        assert cfg.zep is not None
+        assert cfg.zep.zep_url == "http://localhost:8001"
+        assert cfg.zep.write_methods == ["POST"]
+        assert cfg.zep.write_paths == []
+
+    def test_zep_url_trailing_slash_stripped(self, tmp_path: Path) -> None:
+        yaml = ZEP_BASE_YAML.replace(
+            'zep_url: "http://localhost:8001"',
+            'zep_url: "http://localhost:8001/"',
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.zep is not None
+        assert not cfg.zep.zep_url.endswith("/")
+
+    def test_zep_write_methods_uppercased(self, tmp_path: Path) -> None:
+        yaml = ZEP_BASE_YAML.replace(
+            'write_methods: ["POST"]', 'write_methods: ["post"]'
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.zep is not None
+        assert cfg.zep.write_methods == ["POST"]
+
+    def test_zep_write_paths_defaults_to_empty(self, tmp_path: Path) -> None:
+        """write_paths is optional in Zep mode and defaults to []."""
+        cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
+        assert cfg.zep is not None
+        assert cfg.zep.write_paths == []
+
+    def test_zep_write_paths_loaded_when_present(self, tmp_path: Path) -> None:
+        yaml = ZEP_BASE_YAML.replace(
+            'write_methods: ["POST"]',
+            'write_methods: ["POST"]\n  write_paths: ["/api/v1/sessions"]',
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.zep is not None
+        assert cfg.zep.write_paths == ["/api/v1/sessions"]
+
+    def test_missing_zep_section_raises(self, tmp_path: Path) -> None:
+        """adapter_type: zep without a zep: section raises ConfigError."""
+        yaml = ZEP_BASE_YAML.replace(
+            "zep:\n  zep_url: \"http://localhost:8001\"\n  write_methods: [\"POST\"]\n",
+            "",
+        )
+        with pytest.raises(ConfigError, match="zep"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_missing_zep_url_raises(self, tmp_path: Path) -> None:
+        """zep: section without zep_url raises ConfigError."""
+        yaml = ZEP_BASE_YAML.replace(
+            '  zep_url: "http://localhost:8001"\n', ""
+        )
+        with pytest.raises(ConfigError, match="zep_url"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_invalid_zep_url_raises(self, tmp_path: Path) -> None:
+        """A non-HTTP zep_url raises ConfigError."""
+        yaml = ZEP_BASE_YAML.replace(
+            'zep_url: "http://localhost:8001"',
+            'zep_url: "not-a-url"',
+        )
+        with pytest.raises(ConfigError, match="zep_url"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_invalid_adapter_type_raises(self, tmp_path: Path) -> None:
+        """An unknown adapter_type raises ConfigError."""
+        yaml = VALID_YAML.replace(
+            "upstream:", "adapter_type: grpc\nupstream:"
+        )
+        with pytest.raises(ConfigError, match="adapter_type"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_mem0_default_when_adapter_type_absent(self, tmp_path: Path) -> None:
+        """No adapter_type key → defaults to 'mem0'."""
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.adapter_type == "mem0"
+        assert cfg.zep is None
+
+    def test_zep_upstream_section_optional(self, tmp_path: Path) -> None:
+        """In Zep mode, the upstream: section may be omitted."""
+        cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
+        # upstream stub was injected; zep config is the real config
+        assert cfg.zep is not None
+        assert cfg.adapter_type == "zep"
+

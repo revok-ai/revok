@@ -78,3 +78,28 @@ logging:
   # Log level: DEBUG | INFO | WARNING | ERROR | CRITICAL
   level: "INFO"
   format: "%(asctime)s %(name)s %(levelname)s %(message)s"
+
+
+# ---------------------------------------------------------------------------
+# Zep Community Edition adapter (alternative to the Mem0 adapter above)
+#
+# Set adapter_type: zep and add a zep: section.
+# The upstream: section is optional when adapter_type is zep.
+#
+# Revok intercepts POST /api/v1/sessions/{sessionId}/memory, extracts
+# entity references from messages[].content, updates confidence scores,
+# and forwards the original request bytes byte-identical to Zep CE.
+# All other paths are forwarded as-is (pass-through).
+# ---------------------------------------------------------------------------
+# adapter_type: zep
+#
+# zep:
+#   # Base URL of the Zep CE instance.
+#   zep_url: "http://localhost:8001"
+#   # HTTP methods that trigger entity enrichment on the session memory path.
+#   write_methods:
+#     - "POST"
+#   # write_paths is optional and informational only for Zep mode.
+#   # The active write gate is the session-path anchor:
+#   #   POST /api/v1/sessions/{sessionId}/memory  (exact match, no prefix/suffix)
+#   # write_paths: []

@@ -22,7 +22,7 @@ Immutable dataclasses use ``frozen=True``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -113,6 +113,7 @@ class EnrichedPayload:
     entities: list[EntityRecord]
     revok_version: str
     processed_at: float
+    original_bytes: bytes = field(default_factory=bytes)
 
     def to_upstream_dict(self) -> dict[str, object]:
         """Merge original body with the ``x_revok`` metadata block.
