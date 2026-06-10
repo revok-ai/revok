@@ -42,6 +42,8 @@ entity_matcher:
 
   # Or send X-Revok-Entity: <id> header and omit entity_matcher entirely.
 
+  # fuzzy_match_threshold: 80  # similarity score 0–100; omit to disable
+
 scoring:
   half_life_seconds: 86400
   signal_strength: 0.3

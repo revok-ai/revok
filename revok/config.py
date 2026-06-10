@@ -123,6 +123,7 @@ class EntityMatcherConfig:
 
     entities: list[EntityDef] = field(default_factory=list)
     patterns: list[PatternConfig] = field(default_factory=list)
+    fuzzy_match_threshold: float | None = None
 
 
 @dataclass(frozen=True)
@@ -331,6 +332,7 @@ def load_config(path: str) -> Config:
     em_raw = data.get("entity_matcher")
     entity_defs: list[EntityDef] = []
     pattern_cfgs: list[PatternConfig] = []
+    fuzzy_threshold: float | None = None
 
     if em_raw is not None:
         if not isinstance(em_raw, dict):
@@ -381,8 +383,21 @@ def load_config(path: str) -> Config:
                 ) from exc
             pattern_cfgs.append(PatternConfig(name=str(name), regex=str(regex)))
 
+        fuzzy_raw = em_raw.get("fuzzy_match_threshold")
+        if fuzzy_raw is not None:
+            if not isinstance(fuzzy_raw, (int, float)) or not (
+                0 <= float(fuzzy_raw) <= 100
+            ):
+                raise ConfigError(
+                    f"entity_matcher.fuzzy_match_threshold must be between 0 and "
+                    f"100, got {fuzzy_raw}"
+                )
+            fuzzy_threshold = float(fuzzy_raw)
+
     entity_matcher_cfg = EntityMatcherConfig(
-        entities=entity_defs, patterns=pattern_cfgs
+        entities=entity_defs,
+        patterns=pattern_cfgs,
+        fuzzy_match_threshold=fuzzy_threshold,
     )
 
     # --- scoring ---
