@@ -66,6 +66,12 @@ scoring:
   signal_strength: 0.3
   # Maximum possible score for any entity.
   score_cap: 1.0
+  # Time window (seconds) within which two conflicting values for the same
+  # entity are treated as a contradiction. Default: 300 (5 minutes).
+  contradiction_window_seconds: 300
+  # Additional confidence penalty applied when a contradiction is detected,
+  # on top of the normal signal_strength deduction. Default: 0.15.
+  contradiction_penalty: 0.15
 
 state_store:
   # Path to the SQLite WAL database file.

@@ -133,11 +133,19 @@ class ScoringConfig:
         half_life_seconds: Decay half-life (must be > 0).
         signal_strength: Score boost per signal (must be > 0).
         score_cap: Maximum entity score (must be > 0).
+        contradiction_window_seconds: Time window (seconds) within which two
+            conflicting signals are treated as a contradiction (strict open
+            interval: ``gap < window``). Defaults to 300.0 (5 minutes).
+        contradiction_penalty: Additional score penalty applied on top of
+            ``signal_strength`` when a contradiction is detected. Defaults to
+            0.15.
     """
 
     half_life_seconds: float
     signal_strength: float
     score_cap: float
+    contradiction_window_seconds: float = 300.0
+    contradiction_penalty: float = 0.15
 
 
 @dataclass(frozen=True)
@@ -390,10 +398,15 @@ def load_config(path: str) -> Config:
     if not isinstance(score_cap, (int, float)) or float(score_cap) <= 0:
         raise ConfigError("scoring.score_cap must be > 0.")
 
+    contradiction_window = sc.get("contradiction_window_seconds", 300.0)
+    contradiction_penalty_val = sc.get("contradiction_penalty", 0.15)
+
     scoring_cfg = ScoringConfig(
         half_life_seconds=float(half_life),
         signal_strength=float(signal_strength),
         score_cap=float(score_cap),
+        contradiction_window_seconds=float(contradiction_window),
+        contradiction_penalty=float(contradiction_penalty_val),
     )
 
     # --- state_store ---

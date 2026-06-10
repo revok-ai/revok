@@ -104,6 +104,9 @@ class EntityRecord:
     transaction_time: float
     signal_count: int
     pattern_name: str
+    contradiction_count: int = 0
+    last_contradiction_time: float | None = None
+    last_value_fingerprint: str | None = None
 
     @property
     def last_seen(self) -> float:

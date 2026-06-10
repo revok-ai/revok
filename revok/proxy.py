@@ -113,6 +113,7 @@ def build_app(
                 body=json.dumps({"error": "not_found"}).encode(),
             )
         data = dataclasses.asdict(record)
+        data.pop("last_value_fingerprint", None)
         data["score"] = scorer.decay_at(record, time.time())
         return aiohttp.web.Response(
             status=200,
