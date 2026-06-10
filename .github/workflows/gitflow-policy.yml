@@ -13,11 +13,11 @@ jobs:
         if: github.base_ref == 'develop'
         run: |
           SOURCE="${{ github.head_ref }}"
-          if [[ "$SOURCE" =~ ^(feature|hotfix|release)/ ]]; then
+          if [[ "$SOURCE" =~ ^(feat|fix|chore|refactor|docs|test|perf|ci|build|style)/ ]]; then
             echo "✓ '$SOURCE' is allowed to merge into develop."
           else
             echo "✗ Branch '$SOURCE' cannot merge into develop."
-            echo "  Allowed prefixes: feature/, hotfix/, release/"
+            echo "  Allowed prefixes: feat/, fix/, chore/, refactor/, docs/, test/, perf/, ci/, build/, style/"
             exit 1
           fi
 
@@ -25,10 +25,10 @@ jobs:
         if: github.base_ref == 'main'
         run: |
           SOURCE="${{ github.head_ref }}"
-          if [[ "$SOURCE" =~ ^(release|hotfix)/ ]]; then
+          if [[ "$SOURCE" =~ ^(release|fix)/ ]]; then
             echo "✓ '$SOURCE' is allowed to merge into main."
           else
             echo "✗ Branch '$SOURCE' cannot merge into main."
-            echo "  Allowed prefixes: release/, hotfix/"
+            echo "  Allowed prefixes: release/, fix/"
             exit 1
           fi
