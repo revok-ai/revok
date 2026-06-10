@@ -319,6 +319,81 @@ class TestLoadConfigZepMode:
         cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
         assert cfg.upstream.write_paths == []
 
+
+# ---------------------------------------------------------------------------
+# T006: Fuzzy match threshold config tests
+# ---------------------------------------------------------------------------
+
+ENTITY_MATCHER_YAML = """\
+server:
+  host: "127.0.0.1"
+  port: 8080
+  startup_timeout_seconds: 10
+
+upstream:
+  url: "http://localhost:8000"
+  write_methods: ["POST"]
+  write_paths: ["/v1/memories"]
+
+entity_matcher:
+  entities:
+    - id: apex_hoodie
+      display_name: Apex Hoodie
+      aliases:
+        - Apex Hoodie
+{fuzzy_line}
+scoring:
+  half_life_seconds: 86400
+  signal_strength: 0.3
+  score_cap: 1.0
+
+state_store:
+  sqlite_path: "./revok_state.db"
+  hot_layer_max_entries: 1000
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(message)s"
+"""
+
+
+class TestFuzzyMatchThresholdConfig:
+    def test_entity_matcher_fuzzy_threshold_default_is_none(
+        self, tmp_path: Path
+    ) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold is None
+
+    def test_entity_matcher_fuzzy_threshold_explicit_80(self, tmp_path: Path) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 80\n")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold == 80.0
+
+    def test_entity_matcher_fuzzy_threshold_zero_valid(self, tmp_path: Path) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 0\n")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold == 0.0
+
+    def test_entity_matcher_fuzzy_threshold_100_valid(self, tmp_path: Path) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 100\n")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold == 100.0
+
+    def test_entity_matcher_fuzzy_threshold_negative_raises(
+        self, tmp_path: Path
+    ) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: -1\n")
+        with pytest.raises(ConfigError, match="fuzzy_match_threshold"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_entity_matcher_fuzzy_threshold_above_100_raises(
+        self, tmp_path: Path
+    ) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 101\n")
+        with pytest.raises(ConfigError, match="fuzzy_match_threshold"):
+            load_config(_write_yaml(tmp_path, yaml))
+
     def test_zep_write_paths_loaded_when_present(self, tmp_path: Path) -> None:
         yaml = ZEP_BASE_YAML.replace(
             'write_methods: ["POST"]',
