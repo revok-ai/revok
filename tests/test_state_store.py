@@ -250,3 +250,115 @@ async def test_delete_nonexistent_record_returns_false(store):
     """delete() returns False without error when the entity key is not found."""
     result = await store.delete("nobody")
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Contradiction field persistence (T019)
+# ---------------------------------------------------------------------------
+
+
+async def test_contradiction_fields_round_trip(store):
+    """contradiction_count, last_contradiction_time, and last_value_fingerprint
+    survive a put() → get() cycle."""
+    rec = EntityRecord(
+        entity_key="orion_cache",
+        score=0.5,
+        valid_time=1000.0,
+        transaction_time=1000.0,
+        signal_count=3,
+        pattern_name="product",
+        contradiction_count=2,
+        last_contradiction_time=999.0,
+        last_value_fingerprint="450.0",
+    )
+    await store.put(rec)
+    result = await store.get("orion_cache")
+    assert result is not None
+    assert result.contradiction_count == 2
+    assert result.last_contradiction_time == 999.0
+    assert result.last_value_fingerprint == "450.0"
+
+
+async def test_contradiction_fields_default_to_zero_on_new_record(store):
+    """A freshly-stored record without contradiction fields defaults correctly."""
+    rec = make_record("new_entity")
+    await store.put(rec)
+    result = await store.get("new_entity")
+    assert result is not None
+    assert result.contradiction_count == 0
+    assert result.last_contradiction_time is None
+    assert result.last_value_fingerprint is None
+
+
+async def test_list_all_includes_contradiction_fields(tmp_path):
+    """list_all() returns records with contradiction fields populated."""
+    s = SqliteStateStore(make_config(tmp_path))
+    await s.open()
+    rec = EntityRecord(
+        entity_key="z_entity",
+        score=0.7,
+        valid_time=2000.0,
+        transaction_time=2000.0,
+        signal_count=1,
+        pattern_name="product",
+        contradiction_count=1,
+        last_contradiction_time=1999.0,
+        last_value_fingerprint="500.0",
+    )
+    await s.put(rec)
+    all_records = await s.list_all()
+    await s.close()
+    assert len(all_records) == 1
+    assert all_records[0].contradiction_count == 1
+    assert all_records[0].last_contradiction_time == 1999.0
+    assert all_records[0].last_value_fingerprint == "500.0"
+
+
+# ---------------------------------------------------------------------------
+# Backward compat: old schema loads with safe defaults (T020)
+# ---------------------------------------------------------------------------
+
+
+async def test_backward_compat_old_schema_loads_with_zero_count(tmp_path):
+    """A database without the new contradiction columns loads records safely,
+    defaulting contradiction_count to 0 and NULL for the other two fields."""
+    import aiosqlite
+
+    db_path = str(tmp_path / "legacy.db")
+
+    # Build an old-style schema without the new columns
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA journal_mode=WAL;")
+        await db.execute(
+            "CREATE TABLE entity_records ("
+            "  entity_key       TEXT PRIMARY KEY,"
+            "  score            REAL NOT NULL DEFAULT 0.0,"
+            "  last_seen        REAL NOT NULL,"
+            "  valid_time       REAL,"
+            "  transaction_time REAL,"
+            "  signal_count     INTEGER NOT NULL DEFAULT 1,"
+            "  pattern_name     TEXT NOT NULL DEFAULT ''"
+            ");"
+        )
+        await db.execute(
+            "INSERT INTO entity_records "
+            "(entity_key, score, last_seen, valid_time, transaction_time, "
+            " signal_count, pattern_name) "
+            "VALUES ('legacy_key', 0.6, 5000.0, 5000.0, 5000.0, 2, 'person')"
+        )
+        await db.commit()
+
+    # Open via SqliteStateStore — should auto-migrate
+    s = SqliteStateStore(
+        StateStoreConfig(sqlite_path=db_path, hot_layer_max_entries=10)
+    )
+    await s.open()
+    result = await s.get("legacy_key")
+    await s.close()
+
+    assert result is not None
+    assert result.entity_key == "legacy_key"
+    assert result.contradiction_count == 0
+    assert result.last_contradiction_time is None
+    assert result.last_value_fingerprint is None
+

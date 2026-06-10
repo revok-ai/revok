@@ -98,6 +98,35 @@ class TestEntityRecord:
         assert rec.signal_count == 1
         assert rec.pattern_name == "person"
 
+    def test_entity_record_contradiction_defaults(self):
+        rec = EntityRecord(
+            entity_key="x",
+            score=0.5,
+            valid_time=1.0,
+            transaction_time=1.0,
+            signal_count=1,
+            pattern_name="p",
+        )
+        assert rec.contradiction_count == 0
+        assert rec.last_contradiction_time is None
+        assert rec.last_value_fingerprint is None
+
+    def test_entity_record_contradiction_fields_settable(self):
+        rec = EntityRecord(
+            entity_key="x",
+            score=0.5,
+            valid_time=1.0,
+            transaction_time=1.0,
+            signal_count=1,
+            pattern_name="p",
+            contradiction_count=3,
+            last_contradiction_time=999.0,
+            last_value_fingerprint="500.0",
+        )
+        assert rec.contradiction_count == 3
+        assert rec.last_contradiction_time == 999.0
+        assert rec.last_value_fingerprint == "500.0"
+
 
 class TestEnrichedPayload:
     def _make_record(

@@ -118,6 +118,28 @@ class TestLoadConfigValid:
         assert cfg.scoring.signal_strength == 0.3
         assert cfg.scoring.score_cap == 1.0
 
+    def test_scoring_config_contradiction_defaults(self, tmp_path: Path):
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.scoring.contradiction_window_seconds == 300.0
+        assert cfg.scoring.contradiction_penalty == 0.15
+
+    def test_scoring_config_contradiction_explicit(self, tmp_path: Path):
+        yaml_content = VALID_YAML.replace(
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0",
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0\n"
+            "  contradiction_window_seconds: 120.0\n"
+            "  contradiction_penalty: 0.25",
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml_content))
+        assert cfg.scoring.contradiction_window_seconds == 120.0
+        assert cfg.scoring.contradiction_penalty == 0.25
+
     def test_state_store_values(self, tmp_path: Path):
         cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
         assert cfg.state_store.sqlite_path == "./revok_state.db"

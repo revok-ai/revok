@@ -35,6 +35,7 @@ def make_signal(
     content: str = "Alice was here",
     body: bytes = b'{"text": "test"}',
     source_id: str = "test-agent",
+    valid_time: float | None = None,
 ) -> Signal:
     return Signal(
         raw_content=content,
@@ -44,6 +45,7 @@ def make_signal(
         http_path="/v1/memories",
         original_body=body,
         headers={},
+        valid_time=valid_time,
     )
 
 
@@ -58,7 +60,13 @@ def matcher() -> EntityMatcher:
 @pytest.fixture
 def scorer() -> ScoringEngine:
     return ScoringEngine(
-        ScoringConfig(half_life_seconds=86400.0, signal_strength=0.3, score_cap=1.0)
+        ScoringConfig(
+            half_life_seconds=86400.0,
+            signal_strength=0.3,
+            score_cap=1.0,
+            contradiction_window_seconds=300.0,
+            contradiction_penalty=0.15,
+        )
     )
 
 
@@ -204,3 +212,59 @@ async def test_header_case_insensitive_lookup(scorer, store):
 
     assert len(payload.entities) == 1
     assert payload.entities[0].entity_key == "solar_backpack"
+
+
+# ---------------------------------------------------------------------------
+# Contradiction pipeline integration (T022)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def product_matcher() -> EntityMatcher:
+    config = EntityMatcherConfig(
+        patterns=[PatternConfig(name="product", regex=r"\bOrion Cache\b")]
+    )
+    return EntityMatcher(config)
+
+
+async def test_enrich_contradiction_detected_increments_count(
+    product_matcher, scorer, store
+):
+    """Two conflicting signals within window → contradiction_count == 1."""
+    signal1 = make_signal("Orion Cache costs $500/month", valid_time=1000.0)
+    signal2 = make_signal("Orion Cache costs $450/month", valid_time=1060.0)
+
+    await enrich(signal1, product_matcher, scorer, store)
+    payload2 = await enrich(signal2, product_matcher, scorer, store)
+
+    rec = payload2.entities[0]
+    assert rec.entity_key == "orion cache"
+    assert rec.contradiction_count == 1
+    assert rec.last_contradiction_time == 1060.0
+
+
+async def test_enrich_agreeing_signals_no_penalty(product_matcher, scorer, store):
+    """Two identical-value signals → contradiction_count stays 0."""
+    signal1 = make_signal("Orion Cache costs $500/month", valid_time=1000.0)
+    signal2 = make_signal("Orion Cache costs $500/month", valid_time=1060.0)
+
+    await enrich(signal1, product_matcher, scorer, store)
+    payload2 = await enrich(signal2, product_matcher, scorer, store)
+
+    rec = payload2.entities[0]
+    assert rec.contradiction_count == 0
+    assert rec.last_contradiction_time is None
+
+
+async def test_enrich_first_signal_sets_fingerprint_no_contradiction(
+    product_matcher, scorer, store
+):
+    """First signal for an entity is never a contradiction."""
+    signal = make_signal("Orion Cache costs $500/month", valid_time=1000.0)
+    payload = await enrich(signal, product_matcher, scorer, store)
+
+    rec = payload.entities[0]
+    assert rec.contradiction_count == 0
+    assert rec.last_value_fingerprint == "500.0"
+    assert rec.last_contradiction_time is None
+

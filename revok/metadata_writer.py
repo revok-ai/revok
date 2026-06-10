@@ -118,8 +118,24 @@ async def enrich(
             entities = matcher.match(signal.raw_content)
         for entity in entities:
             existing = await store.get(entity.key)
-            new_score = scorer.score(existing, now)
+            new_fingerprint = scorer.extract_fingerprint(signal.raw_content)
+            is_contradiction = scorer.detect_contradiction(
+                existing, new_fingerprint, raw_valid_time
+            )
+            new_score = scorer.score(existing, now, is_contradiction=is_contradiction)
             signal_count = (existing.signal_count + 1) if existing is not None else 1
+            if is_contradiction:
+                contradiction_count = (
+                    (existing.contradiction_count + 1) if existing is not None else 1
+                )
+                last_contradiction_time: float | None = raw_valid_time
+            else:
+                contradiction_count = (
+                    existing.contradiction_count if existing is not None else 0
+                )
+                last_contradiction_time = (
+                    existing.last_contradiction_time if existing is not None else None
+                )
             record = EntityRecord(
                 entity_key=entity.key,
                 score=new_score,
@@ -127,6 +143,9 @@ async def enrich(
                 transaction_time=now,
                 signal_count=signal_count,
                 pattern_name=entity.pattern_name,
+                contradiction_count=contradiction_count,
+                last_contradiction_time=last_contradiction_time,
+                last_value_fingerprint=new_fingerprint,
             )
             await store.put(record)
             scored_records.append(record)
