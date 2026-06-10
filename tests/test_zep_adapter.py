@@ -42,13 +42,13 @@ def test_extract_session_id_valid(path: str, expected: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/v1/sessions//memory",           # empty segment
+        "/api/v1/sessions//memory",  # empty segment
         "/api/v1/sessions/abc/memory/extra",  # extra suffix
-        "/api/v1/sessions/abc/memories",      # wrong endpoint name
-        "/api/v2/sessions/abc/memory",        # wrong API version
-        "/api/v1/sessions/abc",               # missing /memory tail
-        "",                                   # empty string
-        "/api/v1/sessions/abc/memory/",       # trailing slash
+        "/api/v1/sessions/abc/memories",  # wrong endpoint name
+        "/api/v2/sessions/abc/memory",  # wrong API version
+        "/api/v1/sessions/abc",  # missing /memory tail
+        "",  # empty string
+        "/api/v1/sessions/abc/memory/",  # trailing slash
     ],
 )
 def test_extract_session_id_no_match(path: str) -> None:
@@ -168,7 +168,9 @@ async def test_zep_write_emits_debug_log(caplog: pytest.LogCaptureFixture) -> No
         await adapter.write(payload, "/api/v1/sessions/mysession/memory")
 
     debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
-    assert debug_records, "Expected at least one DEBUG log record from ZepAdapter.write()"
+    assert debug_records, (
+        "Expected at least one DEBUG log record from ZepAdapter.write()"
+    )
     record = debug_records[0]
     assert record.__dict__.get("session_id") == "mysession"
     assert record.__dict__.get("http_path") == "/api/v1/sessions/mysession/memory"
@@ -201,10 +203,10 @@ async def test_close_is_idempotent() -> None:
     "method,path,expected",
     [
         ("POST", "/api/v1/sessions/abc/memory", True),
-        ("post", "/api/v1/sessions/abc/memory", True),   # case-insensitive
-        ("GET",  "/api/v1/sessions/abc/memory", False),   # GET not in write_methods
-        ("POST", "/api/v1/sessions/",           False),   # no session ID
-        ("POST", "/api/v1/other",               False),   # unrelated path
+        ("post", "/api/v1/sessions/abc/memory", True),  # case-insensitive
+        ("GET", "/api/v1/sessions/abc/memory", False),  # GET not in write_methods
+        ("POST", "/api/v1/sessions/", False),  # no session ID
+        ("POST", "/api/v1/other", False),  # unrelated path
     ],
 )
 def test_zep_is_write_request(method: str, path: str, expected: bool) -> None:
@@ -219,9 +221,7 @@ def test_zep_is_write_request(method: str, path: str, expected: bool) -> None:
 
 def test_zep_extract_signal_context_uses_session_id_as_source() -> None:
     """source_id is the session ID extracted from the path."""
-    body = json.dumps(
-        {"messages": [{"role": "user", "content": "hello"}]}
-    ).encode()
+    body = json.dumps({"messages": [{"role": "user", "content": "hello"}]}).encode()
     source_id, raw_content = ZepAdapter.extract_signal_context(
         "/api/v1/sessions/sess-99/memory", {}, body
     )
