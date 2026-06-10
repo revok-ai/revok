@@ -408,8 +408,12 @@ class PricingSalesAgent:
         )
         budget_task = Task(
             description=self._build_task_description(
-                product_name, status, score, signal_count,
-                question=question, pre_fetched_live=pre_fetched_live,
+                product_name,
+                status,
+                score,
+                signal_count,
+                question=question,
+                pre_fetched_live=pre_fetched_live,
             ),
             expected_output=(
                 "A clear pricing recommendation with confidence level and any caveats "
@@ -489,9 +493,7 @@ class PricingSalesAgent:
         # hallucinate a value, regardless of whether it calls get_current_price itself.
         pre_fetched_live: str | None = None
         if status == "stale":
-            pre_fetched_live = await asyncio.to_thread(
-                price_tool._run, product_name
-            )
+            pre_fetched_live = await asyncio.to_thread(price_tool._run, product_name)
 
         crew = self._build_crew(
             product_name,
@@ -512,7 +514,9 @@ class PricingSalesAgent:
 
         live_price: float | None = None
         # Prefer the crew's own tool result; fall back to the pre-fetched value.
-        tool_result = price_tool._last_result if price_tool._call_log else pre_fetched_live
+        tool_result = (
+            price_tool._last_result if price_tool._call_log else pre_fetched_live
+        )
         if tool_result:
             matches = _PRICE_RE.findall(tool_result)
             if matches:
@@ -702,7 +706,9 @@ class PricingSalesAgent:
         re_verified = bool(price_tool._call_log) or (pre_fetched_live is not None)
         live_price: float | None = None
         # Prefer the crew's own tool result; fall back to the pre-fetched value.
-        _live_src = price_tool._last_result if price_tool._call_log else pre_fetched_live
+        _live_src = (
+            price_tool._last_result if price_tool._call_log else pre_fetched_live
+        )
         if _live_src:
             matches_live = _PRICE_RE.findall(_live_src)
             if matches_live:

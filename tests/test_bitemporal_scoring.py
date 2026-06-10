@@ -42,7 +42,9 @@ def _make_record(
         entity_key="test:entity",
         score=score,
         valid_time=valid_time,
-        transaction_time=transaction_time if transaction_time is not None else valid_time,
+        transaction_time=transaction_time
+        if transaction_time is not None
+        else valid_time,
         signal_count=1,
         pattern_name="person",
     )
@@ -207,10 +209,11 @@ async def test_future_valid_time_emits_warning(matcher, scorer, store, caplog):
     with caplog.at_level(logging.WARNING, logger="revok.metadata_writer"):
         await enrich(signal, matcher, scorer, store)
 
-    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    warning_messages = [
+        r.message for r in caplog.records if r.levelno == logging.WARNING
+    ]
     assert any(
-        "future" in msg.lower() or "clamping" in msg.lower()
-        for msg in warning_messages
+        "future" in msg.lower() or "clamping" in msg.lower() for msg in warning_messages
     )
 
 

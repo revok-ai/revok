@@ -308,7 +308,7 @@ class TestLoadConfigZepMode:
     def test_missing_upstream_section_raises_in_zep_mode(self, tmp_path: Path) -> None:
         """adapter_type: zep without an upstream: section raises ConfigError."""
         yaml = ZEP_BASE_YAML.replace(
-            "upstream:\n  url: \"http://localhost:8001\"\n  write_methods: [\"POST\"]\n",
+            'upstream:\n  url: "http://localhost:8001"\n  write_methods: ["POST"]\n',
             "",
         )
         with pytest.raises(ConfigError, match="upstream"):
@@ -316,9 +316,7 @@ class TestLoadConfigZepMode:
 
     def test_missing_upstream_url_raises_in_zep_mode(self, tmp_path: Path) -> None:
         """upstream: section without url raises ConfigError."""
-        yaml = ZEP_BASE_YAML.replace(
-            '  url: "http://localhost:8001"\n', ""
-        )
+        yaml = ZEP_BASE_YAML.replace('  url: "http://localhost:8001"\n', "")
         with pytest.raises(ConfigError, match="url"):
             load_config(_write_yaml(tmp_path, yaml))
 
@@ -333,9 +331,7 @@ class TestLoadConfigZepMode:
 
     def test_invalid_adapter_type_raises(self, tmp_path: Path) -> None:
         """An unknown adapter_type raises ConfigError."""
-        yaml = VALID_YAML.replace(
-            "upstream:", "adapter_type: grpc\nupstream:"
-        )
+        yaml = VALID_YAML.replace("upstream:", "adapter_type: grpc\nupstream:")
         with pytest.raises(ConfigError, match="adapter_type"):
             load_config(_write_yaml(tmp_path, yaml))
 
@@ -346,7 +342,6 @@ class TestLoadConfigZepMode:
 
     def test_mem0_write_paths_required(self, tmp_path: Path) -> None:
         """In Mem0 mode, upstream.write_paths must be non-empty."""
-        yaml = VALID_YAML.replace("  write_paths: [\"/v1/memories\"]\n", "")
+        yaml = VALID_YAML.replace('  write_paths: ["/v1/memories"]\n', "")
         with pytest.raises(ConfigError, match="write_paths"):
             load_config(_write_yaml(tmp_path, yaml))
-
