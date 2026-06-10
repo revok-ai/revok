@@ -110,9 +110,7 @@ async def test_zep_write_body_byte_identical(tmp_path: Path) -> None:
     mock_app = web.Application()
     mock_app.router.add_route("*", "/{path_info:.*}", _mock_zep)
 
-    original_body = (
-        b'{"messages": [{"role": "user", "content": "test message here"}]}'
-    )
+    original_body = b'{"messages": [{"role": "user", "content": "test message here"}]}'
 
     async with TestServer(mock_app) as mock_server:
         config = _zep_config(

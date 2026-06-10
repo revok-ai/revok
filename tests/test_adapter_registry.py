@@ -22,7 +22,10 @@ from revok.interfaces import MemoryAdapter
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _upstream(write_methods: list[str] | None = None, write_paths: list[str] | None = None) -> UpstreamConfig:
+
+def _upstream(
+    write_methods: list[str] | None = None, write_paths: list[str] | None = None
+) -> UpstreamConfig:
     return UpstreamConfig(
         url="http://localhost:8000",
         write_methods=write_methods or ["POST"],
@@ -54,7 +57,9 @@ def test_build_adapter_satisfies_memory_adapter_protocol() -> None:
     session = MagicMock(spec=aiohttp.ClientSession)
     for key in _REGISTRY:
         adapter = build_adapter(key, _upstream(), session)
-        assert isinstance(adapter, MemoryAdapter), f"{key} adapter does not satisfy MemoryAdapter"
+        assert isinstance(adapter, MemoryAdapter), (
+            f"{key} adapter does not satisfy MemoryAdapter"
+        )
 
 
 def test_build_adapter_unknown_type_raises_value_error() -> None:
@@ -79,11 +84,11 @@ def test_registry_contains_mem0_and_zep() -> None:
     "method,path,expected",
     [
         ("POST", "/v1/memories", True),
-        ("POST", "/v1/memories/extra", True),   # path prefix match
-        ("post", "/v1/memories", True),          # method case-insensitive
-        ("GET",  "/v1/memories", False),          # wrong method
-        ("POST", "/v1/other",    False),          # wrong path
-        ("DELETE", "/v1/memories", False),        # method not in write_methods
+        ("POST", "/v1/memories/extra", True),  # path prefix match
+        ("post", "/v1/memories", True),  # method case-insensitive
+        ("GET", "/v1/memories", False),  # wrong method
+        ("POST", "/v1/other", False),  # wrong path
+        ("DELETE", "/v1/memories", False),  # method not in write_methods
     ],
 )
 def test_mem0_is_write_request(method: str, path: str, expected: bool) -> None:
