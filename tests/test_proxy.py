@@ -653,7 +653,9 @@ async def test_memory_write_still_goes_through_enrich(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_get_entity_response_includes_contradiction_fields(tmp_path: Path) -> None:
+async def test_get_entity_response_includes_contradiction_fields(
+    tmp_path: Path,
+) -> None:
     """GET response body contains contradiction_count and last_contradiction_time."""
     from revok.models import EntityRecord
 
@@ -688,7 +690,9 @@ async def test_get_entity_response_includes_contradiction_fields(tmp_path: Path)
         await store.close()
 
 
-async def test_get_entity_response_excludes_last_value_fingerprint(tmp_path: Path) -> None:
+async def test_get_entity_response_excludes_last_value_fingerprint(
+    tmp_path: Path,
+) -> None:
     """GET response must NOT include the internal last_value_fingerprint field."""
     from revok.models import EntityRecord
 
@@ -718,4 +722,3 @@ async def test_get_entity_response_excludes_last_value_fingerprint(tmp_path: Pat
             assert "last_value_fingerprint" not in body
     finally:
         await store.close()
-

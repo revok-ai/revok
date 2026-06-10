@@ -335,4 +335,3 @@ def test_score_existing_calls_unchanged_without_keyword(c_engine):
     existing = make_contradictable_record("500.0", valid_time=1000.0)
     result = c_engine.score(existing, now=1000.0)
     assert result == pytest.approx(existing.score - SIGNAL_STRENGTH)
-

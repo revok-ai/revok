@@ -361,4 +361,3 @@ async def test_backward_compat_old_schema_loads_with_zero_count(tmp_path):
     assert result.contradiction_count == 0
     assert result.last_contradiction_time is None
     assert result.last_value_fingerprint is None
-

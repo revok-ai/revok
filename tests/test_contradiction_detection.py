@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from revok.config import EntityMatcherConfig, PatternConfig, ScoringConfig, StateStoreConfig
+from revok.config import (
+    EntityMatcherConfig,
+    PatternConfig,
+    ScoringConfig,
+    StateStoreConfig,
+)
 from revok.entity_matcher import EntityMatcher
 from revok.metadata_writer import enrich
 from revok.models import Signal
@@ -77,9 +82,17 @@ async def test_scenario_1_agreeing_signals_no_contradiction(
     product_matcher, scorer, store
 ):
     """Two signals with the same price → no contradiction, count stays 0."""
-    await enrich(make_signal("Orion Cache costs $500/month", 1000.0), product_matcher, scorer, store)
+    await enrich(
+        make_signal("Orion Cache costs $500/month", 1000.0),
+        product_matcher,
+        scorer,
+        store,
+    )
     payload2 = await enrich(
-        make_signal("Orion Cache costs $500/month", 1060.0), product_matcher, scorer, store
+        make_signal("Orion Cache costs $500/month", 1060.0),
+        product_matcher,
+        scorer,
+        store,
     )
 
     rec = payload2.entities[0]
@@ -102,13 +115,19 @@ async def test_scenario_2_conflicting_signals_contradiction_detected(
 ):
     """$500 then $450 within window → contradiction, lower score."""
     payload1 = await enrich(
-        make_signal("Orion Cache costs $500/month", 1000.0), product_matcher, scorer, store
+        make_signal("Orion Cache costs $500/month", 1000.0),
+        product_matcher,
+        scorer,
+        store,
     )
     # payload1 is used only to confirm no contradiction on first signal
     assert payload1.entities[0].contradiction_count == 0
 
     payload2 = await enrich(
-        make_signal("Orion Cache costs $450/month", 1060.0), product_matcher, scorer, store
+        make_signal("Orion Cache costs $450/month", 1060.0),
+        product_matcher,
+        scorer,
+        store,
     )
     rec = payload2.entities[0]
 
@@ -132,7 +151,12 @@ async def test_scenario_3_conflict_at_window_boundary_no_penalty(
     product_matcher, scorer, store
 ):
     """gap == window is NOT a contradiction (strict open interval)."""
-    await enrich(make_signal("Orion Cache costs $500/month", 1000.0), product_matcher, scorer, store)
+    await enrich(
+        make_signal("Orion Cache costs $500/month", 1000.0),
+        product_matcher,
+        scorer,
+        store,
+    )
     payload2 = await enrich(
         make_signal("Orion Cache costs $450/month", 1000.0 + WINDOW),  # gap == 300
         product_matcher,
@@ -153,9 +177,17 @@ async def test_scenario_4_score_recovers_after_contradiction(
     product_matcher, scorer, store
 ):
     """Score recovers toward score_cap via normal decay; contradiction fields unchanged."""
-    await enrich(make_signal("Orion Cache costs $500/month", 1000.0), product_matcher, scorer, store)
+    await enrich(
+        make_signal("Orion Cache costs $500/month", 1000.0),
+        product_matcher,
+        scorer,
+        store,
+    )
     payload2 = await enrich(
-        make_signal("Orion Cache costs $450/month", 1060.0), product_matcher, scorer, store
+        make_signal("Orion Cache costs $450/month", 1060.0),
+        product_matcher,
+        scorer,
+        store,
     )
     contradicted_rec = payload2.entities[0]
     contradicted_score = contradicted_rec.score
@@ -174,14 +206,25 @@ async def test_scenario_4_score_recovers_after_contradiction(
 # ---------------------------------------------------------------------------
 
 
-async def test_scenario_5_rapid_flips_accumulate_count(
-    product_matcher, scorer, store
-):
+async def test_scenario_5_rapid_flips_accumulate_count(product_matcher, scorer, store):
     """$500 → $450 → $500 all within window → contradiction_count == 2."""
-    await enrich(make_signal("Orion Cache costs $500/month", 1000.0), product_matcher, scorer, store)
-    await enrich(make_signal("Orion Cache costs $450/month", 1030.0), product_matcher, scorer, store)
+    await enrich(
+        make_signal("Orion Cache costs $500/month", 1000.0),
+        product_matcher,
+        scorer,
+        store,
+    )
+    await enrich(
+        make_signal("Orion Cache costs $450/month", 1030.0),
+        product_matcher,
+        scorer,
+        store,
+    )
     payload3 = await enrich(
-        make_signal("Orion Cache costs $500/month", 1060.0), product_matcher, scorer, store
+        make_signal("Orion Cache costs $500/month", 1060.0),
+        product_matcher,
+        scorer,
+        store,
     )
 
     rec = payload3.entities[0]
@@ -221,7 +264,9 @@ async def test_scenario_6_backward_compat_old_schema(tmp_path):
         )
         await db.commit()
 
-    s = SqliteStateStore(StateStoreConfig(sqlite_path=db_path, hot_layer_max_entries=10))
+    s = SqliteStateStore(
+        StateStoreConfig(sqlite_path=db_path, hot_layer_max_entries=10)
+    )
     await s.open()
 
     try:
@@ -242,14 +287,10 @@ async def test_scenario_6_backward_compat_old_schema(tmp_path):
 async def test_scenario_7_non_numeric_content_contradiction(scorer, store):
     """Non-numeric auth state flip is detected via hash-based fingerprints."""
     matcher = EntityMatcher(
-        EntityMatcherConfig(
-            patterns=[PatternConfig(name="auth", regex=r"\buser\b")]
-        )
+        EntityMatcherConfig(patterns=[PatternConfig(name="auth", regex=r"\buser\b")])
     )
 
-    await enrich(
-        make_signal("user is authenticated", 1000.0), matcher, scorer, store
-    )
+    await enrich(make_signal("user is authenticated", 1000.0), matcher, scorer, store)
     payload2 = await enrich(
         make_signal("user is not authenticated", 1030.0), matcher, scorer, store
     )

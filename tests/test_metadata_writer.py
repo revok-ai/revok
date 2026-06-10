@@ -267,4 +267,3 @@ async def test_enrich_first_signal_sets_fingerprint_no_contradiction(
     assert rec.contradiction_count == 0
     assert rec.last_value_fingerprint == "500.0"
     assert rec.last_contradiction_time is None
-
