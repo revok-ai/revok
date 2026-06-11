@@ -75,7 +75,8 @@ class TestEntityRecord:
         rec = EntityRecord(
             entity_key="alice smith",
             score=0.5,
-            last_seen=1000.0,
+            valid_time=1000.0,
+            transaction_time=1000.0,
             signal_count=2,
             pattern_name="person",
         )
@@ -86,7 +87,8 @@ class TestEntityRecord:
         rec = EntityRecord(
             entity_key="bob jones",
             score=0.3,
-            last_seen=2000.0,
+            valid_time=2000.0,
+            transaction_time=2000.0,
             signal_count=1,
             pattern_name="person",
         )
@@ -96,6 +98,35 @@ class TestEntityRecord:
         assert rec.signal_count == 1
         assert rec.pattern_name == "person"
 
+    def test_entity_record_contradiction_defaults(self):
+        rec = EntityRecord(
+            entity_key="x",
+            score=0.5,
+            valid_time=1.0,
+            transaction_time=1.0,
+            signal_count=1,
+            pattern_name="p",
+        )
+        assert rec.contradiction_count == 0
+        assert rec.last_contradiction_time is None
+        assert rec.last_value_fingerprint is None
+
+    def test_entity_record_contradiction_fields_settable(self):
+        rec = EntityRecord(
+            entity_key="x",
+            score=0.5,
+            valid_time=1.0,
+            transaction_time=1.0,
+            signal_count=1,
+            pattern_name="p",
+            contradiction_count=3,
+            last_contradiction_time=999.0,
+            last_value_fingerprint="500.0",
+        )
+        assert rec.contradiction_count == 3
+        assert rec.last_contradiction_time == 999.0
+        assert rec.last_value_fingerprint == "500.0"
+
 
 class TestEnrichedPayload:
     def _make_record(
@@ -104,7 +135,8 @@ class TestEnrichedPayload:
         return EntityRecord(
             entity_key=key,
             score=score,
-            last_seen=1748476740.0,  # 2026-05-28T19:59:00Z (approx)
+            valid_time=1748476740.0,
+            transaction_time=1748476740.0,
             signal_count=3,
             pattern_name="person",
         )

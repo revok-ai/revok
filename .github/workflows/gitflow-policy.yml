@@ -1,0 +1,36 @@
+name: Git Flow Policy
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  enforce-gitflow:
+    name: Enforce Git Flow branch policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch for PRs to develop
+        if: github.base_ref == 'develop'
+        run: |
+          SOURCE="${{ github.head_ref }}"
+          if [[ "$SOURCE" =~ ^(feat|fix|chore|refactor|docs|test|perf|ci|build|style)/ ]] || \
+             [[ "$SOURCE" =~ ^[0-9]+-.*$ ]]; then
+            echo "✓ '$SOURCE' is allowed to merge into develop"
+          else
+            echo "✗ '$SOURCE' cannot merge into develop"
+            echo "  Allowed: feat/, fix/, chore/, refactor/, docs/, test/, or Spec Kit branches (001-*)"
+            exit 1
+          fi
+
+      - name: Check source branch for PRs to main
+        if: github.base_ref == 'main'
+        run: |
+          SOURCE="${{ github.head_ref }}"
+          if [[ "$SOURCE" =~ ^(release|fix)/ ]] || \
+             [[ "$SOURCE" == "develop" ]]; then
+            echo "✓ '$SOURCE' is allowed to merge into main"
+          else
+            echo "✗ '$SOURCE' cannot merge into main"
+            echo "  Allowed: release/, fix/, or develop"
+            exit 1
+          fi
+

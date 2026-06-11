@@ -19,7 +19,7 @@ server:
   startup_timeout_seconds: 10
 
 upstream:
-  mem0_url: "http://localhost:8000"
+  url: "http://localhost:8000"
   write_methods: ["POST"]
   write_paths: ["/v1/memories"]
 
@@ -58,11 +58,11 @@ class TestLoadConfigValid:
 
     def test_upstream_url_stripped_of_trailing_slash(self, tmp_path: Path):
         yaml_content = VALID_YAML.replace(
-            'mem0_url: "http://localhost:8000"',
-            'mem0_url: "http://localhost:8000/"',
+            'url: "http://localhost:8000"',
+            'url: "http://localhost:8000/"',
         )
         cfg = load_config(_write_yaml(tmp_path, yaml_content))
-        assert not cfg.upstream.mem0_url.endswith("/")
+        assert not cfg.upstream.url.endswith("/")
 
     def test_write_methods_uppercased(self, tmp_path: Path):
         yaml_content = VALID_YAML.replace(
@@ -118,6 +118,28 @@ class TestLoadConfigValid:
         assert cfg.scoring.signal_strength == 0.3
         assert cfg.scoring.score_cap == 1.0
 
+    def test_scoring_config_contradiction_defaults(self, tmp_path: Path):
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.scoring.contradiction_window_seconds == 300.0
+        assert cfg.scoring.contradiction_penalty == 0.15
+
+    def test_scoring_config_contradiction_explicit(self, tmp_path: Path):
+        yaml_content = VALID_YAML.replace(
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0",
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0\n"
+            "  contradiction_window_seconds: 120.0\n"
+            "  contradiction_penalty: 0.25",
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml_content))
+        assert cfg.scoring.contradiction_window_seconds == 120.0
+        assert cfg.scoring.contradiction_penalty == 0.25
+
     def test_state_store_values(self, tmp_path: Path):
         cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
         assert cfg.state_store.sqlite_path == "./revok_state.db"
@@ -133,9 +155,9 @@ class TestLoadConfigMissingKeys:
         with pytest.raises(ConfigError, match="server"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_missing_upstream_mem0_url(self, tmp_path: Path):
-        yaml = VALID_YAML.replace('  mem0_url: "http://localhost:8000"\n', "")
-        with pytest.raises(ConfigError, match="mem0_url"):
+    def test_missing_upstream_url(self, tmp_path: Path):
+        yaml = VALID_YAML.replace('  url: "http://localhost:8000"\n', "")
+        with pytest.raises(ConfigError, match="url"):
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_missing_entity_matcher_is_valid(self, tmp_path: Path):
@@ -175,11 +197,11 @@ class TestLoadConfigValidationRules:
         with pytest.raises(ConfigError, match="score_cap"):
             load_config(_write_yaml(tmp_path, yaml))
 
-    def test_invalid_mem0_url(self, tmp_path: Path):
+    def test_invalid_upstream_url(self, tmp_path: Path):
         yaml = VALID_YAML.replace(
-            '  mem0_url: "http://localhost:8000"', '  mem0_url: "not-a-url"'
+            '  url: "http://localhost:8000"', '  url: "not-a-url"'
         )
-        with pytest.raises(ConfigError, match="mem0_url"):
+        with pytest.raises(ConfigError, match="url"):
             load_config(_write_yaml(tmp_path, yaml))
 
     def test_invalid_regex_pattern(self, tmp_path: Path):
@@ -230,3 +252,193 @@ class TestLoadConfigValidationRules:
         p.write_text("key: [unclosed", encoding="utf-8")
         with pytest.raises(ConfigError, match="YAML"):
             load_config(str(p))
+
+
+# ---------------------------------------------------------------------------
+# T022: Zep adapter_type config tests
+# ---------------------------------------------------------------------------
+
+ZEP_BASE_YAML = """\
+server:
+  host: "127.0.0.1"
+  port: 8080
+  startup_timeout_seconds: 10
+
+adapter_type: zep
+
+upstream:
+  url: "http://localhost:8001"
+  write_methods: ["POST"]
+
+entity_matcher:
+  patterns:
+    - name: "person"
+      regex: "\\\\b[A-Z][a-z]+\\\\b"
+
+scoring:
+  half_life_seconds: 86400
+  signal_strength: 0.3
+  score_cap: 1.0
+
+state_store:
+  sqlite_path: "./revok_zep.db"
+  hot_layer_max_entries: 1000
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(message)s"
+"""
+
+
+class TestLoadConfigZepMode:
+    def test_valid_zep_config_loads(self, tmp_path: Path) -> None:
+        """A complete Zep config loads without error."""
+        cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
+        assert cfg.adapter_type == "zep"
+        assert cfg.upstream.url == "http://localhost:8001"
+        assert cfg.upstream.write_methods == ["POST"]
+        assert cfg.upstream.write_paths == []
+
+    def test_zep_url_trailing_slash_stripped(self, tmp_path: Path) -> None:
+        yaml = ZEP_BASE_YAML.replace(
+            'url: "http://localhost:8001"',
+            'url: "http://localhost:8001/"',
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert not cfg.upstream.url.endswith("/")
+
+    def test_zep_write_methods_uppercased(self, tmp_path: Path) -> None:
+        yaml = ZEP_BASE_YAML.replace(
+            'write_methods: ["POST"]', 'write_methods: ["post"]'
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.upstream.write_methods == ["POST"]
+
+    def test_zep_write_paths_defaults_to_empty(self, tmp_path: Path) -> None:
+        """write_paths is optional in Zep mode and defaults to []."""
+        cfg = load_config(_write_yaml(tmp_path, ZEP_BASE_YAML))
+        assert cfg.upstream.write_paths == []
+
+
+# ---------------------------------------------------------------------------
+# T006: Fuzzy match threshold config tests
+# ---------------------------------------------------------------------------
+
+ENTITY_MATCHER_YAML = """\
+server:
+  host: "127.0.0.1"
+  port: 8080
+  startup_timeout_seconds: 10
+
+upstream:
+  url: "http://localhost:8000"
+  write_methods: ["POST"]
+  write_paths: ["/v1/memories"]
+
+entity_matcher:
+  entities:
+    - id: apex_hoodie
+      display_name: Apex Hoodie
+      aliases:
+        - Apex Hoodie
+{fuzzy_line}
+scoring:
+  half_life_seconds: 86400
+  signal_strength: 0.3
+  score_cap: 1.0
+
+state_store:
+  sqlite_path: "./revok_state.db"
+  hot_layer_max_entries: 1000
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(levelname)s %(message)s"
+"""
+
+
+class TestFuzzyMatchThresholdConfig:
+    def test_entity_matcher_fuzzy_threshold_default_is_none(
+        self, tmp_path: Path
+    ) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold is None
+
+    def test_entity_matcher_fuzzy_threshold_explicit_80(self, tmp_path: Path) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 80\n")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold == 80.0
+
+    def test_entity_matcher_fuzzy_threshold_zero_valid(self, tmp_path: Path) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 0\n")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold == 0.0
+
+    def test_entity_matcher_fuzzy_threshold_100_valid(self, tmp_path: Path) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 100\n")
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.entity_matcher.fuzzy_match_threshold == 100.0
+
+    def test_entity_matcher_fuzzy_threshold_negative_raises(
+        self, tmp_path: Path
+    ) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: -1\n")
+        with pytest.raises(ConfigError, match="fuzzy_match_threshold"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_entity_matcher_fuzzy_threshold_above_100_raises(
+        self, tmp_path: Path
+    ) -> None:
+        yaml = ENTITY_MATCHER_YAML.format(fuzzy_line="  fuzzy_match_threshold: 101\n")
+        with pytest.raises(ConfigError, match="fuzzy_match_threshold"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_zep_write_paths_loaded_when_present(self, tmp_path: Path) -> None:
+        yaml = ZEP_BASE_YAML.replace(
+            'write_methods: ["POST"]',
+            'write_methods: ["POST"]\n  write_paths: ["/api/v1/sessions"]',
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.upstream.write_paths == ["/api/v1/sessions"]
+
+    def test_missing_upstream_section_raises_in_zep_mode(self, tmp_path: Path) -> None:
+        """adapter_type: zep without an upstream: section raises ConfigError."""
+        yaml = ZEP_BASE_YAML.replace(
+            'upstream:\n  url: "http://localhost:8001"\n  write_methods: ["POST"]\n',
+            "",
+        )
+        with pytest.raises(ConfigError, match="upstream"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_missing_upstream_url_raises_in_zep_mode(self, tmp_path: Path) -> None:
+        """upstream: section without url raises ConfigError."""
+        yaml = ZEP_BASE_YAML.replace('  url: "http://localhost:8001"\n', "")
+        with pytest.raises(ConfigError, match="url"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_invalid_upstream_url_raises_in_zep_mode(self, tmp_path: Path) -> None:
+        """A non-HTTP upstream.url raises ConfigError."""
+        yaml = ZEP_BASE_YAML.replace(
+            'url: "http://localhost:8001"',
+            'url: "not-a-url"',
+        )
+        with pytest.raises(ConfigError, match="url"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_invalid_adapter_type_raises(self, tmp_path: Path) -> None:
+        """An unknown adapter_type raises ConfigError."""
+        yaml = VALID_YAML.replace("upstream:", "adapter_type: grpc\nupstream:")
+        with pytest.raises(ConfigError, match="adapter_type"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_mem0_default_when_adapter_type_absent(self, tmp_path: Path) -> None:
+        """No adapter_type key → defaults to 'mem0'."""
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.adapter_type == "mem0"
+
+    def test_mem0_write_paths_required(self, tmp_path: Path) -> None:
+        """In Mem0 mode, upstream.write_paths must be non-empty."""
+        yaml = VALID_YAML.replace('  write_paths: ["/v1/memories"]\n', "")
+        with pytest.raises(ConfigError, match="write_paths"):
+            load_config(_write_yaml(tmp_path, yaml))

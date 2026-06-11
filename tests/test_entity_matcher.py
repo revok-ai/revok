@@ -16,6 +16,8 @@
 
 """Tests for revok.entity_matcher.EntityMatcher."""
 
+from __future__ import annotations
+
 from revok.config import EntityDef, EntityMatcherConfig, PatternConfig
 from revok.entity_matcher import EntityMatcher
 
@@ -182,3 +184,141 @@ def test_empty_config_returns_empty_list():
     """No entities or patterns configured — match() always returns []."""
     matcher = EntityMatcher(EntityMatcherConfig())
     assert matcher.match("Apex Hoodie Alice anything") == []
+
+
+# ---------------------------------------------------------------------------
+# T008: Fuzzy disabled when threshold is None
+# ---------------------------------------------------------------------------
+
+
+def make_fuzzy_matcher(
+    threshold: float | None,
+    *entity_tuples: tuple[str, str, list[str]],
+) -> EntityMatcher:
+    """Build an EntityMatcher with fuzzy_match_threshold set."""
+    entities = [
+        EntityDef(id=eid, display_name=dname, aliases=aliases)
+        for eid, dname, aliases in entity_tuples
+    ]
+    config = EntityMatcherConfig(entities=entities, fuzzy_match_threshold=threshold)
+    return EntityMatcher(config)
+
+
+def test_fuzzy_disabled_when_threshold_none():
+    """When fuzzy_match_threshold is None, near-miss text returns no entities."""
+    matcher = make_fuzzy_matcher(None, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    # "apex hodie" is a typo — exact regex won't match; fuzzy should be skipped
+    entities = matcher.match("apex hodie")
+    assert entities == []
+
+
+# ---------------------------------------------------------------------------
+# T010: Exact match skips fuzzy path
+# ---------------------------------------------------------------------------
+
+
+def test_fuzzy_not_entered_when_exact_matches():
+    """Exact alias match returns entity without entering fuzzy path."""
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("Customer bought the Apex Hoodie today")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+    # pattern_name for exact match is the canonical id, NOT "fuzzy"
+    assert entities[0].pattern_name == "apex_hoodie"
+
+
+# ---------------------------------------------------------------------------
+# T012-T015: Near-miss match tests (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_fuzzy_match_single_char_typo():
+    """Single-char typo 'apex hodie' → apex_hoodie at threshold 80."""
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("apex hodie")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_fuzzy_match_in_longer_text():
+    """Near-miss within a sentence is matched (partial_ratio finds substring)."""
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    # "get me apex hodie" scores 80.0 with partial_ratio("Apex Hoodie", ...)
+    entities = matcher.match("get me apex hodie")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_fuzzy_no_match_below_threshold():
+    """Completely unrelated text scores below threshold → []."""
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("totally unrelated item here")
+    assert entities == []
+
+
+def test_fuzzy_entity_key_is_canonical_id():
+    """Fuzzy match returns canonical entity id as the key."""
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("apex hodie")
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_fuzzy_pattern_name_is_fuzzy():
+    """Fuzzy match sets pattern_name to 'fuzzy'."""
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("apex hodie")
+    assert entities[0].pattern_name == "fuzzy"
+
+
+def test_fuzzy_raw_text_is_full_input():
+    """Fuzzy match stores the full input text as raw_text."""
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    text = "apex hodie"
+    entities = matcher.match(text)
+    assert entities[0].raw_text == text
+
+
+# ---------------------------------------------------------------------------
+# T016-T017: Threshold sensitivity tests (Phase 6)
+# ---------------------------------------------------------------------------
+
+
+def test_fuzzy_threshold_boundary_accepts_at_threshold():
+    """Text scoring exactly at the threshold IS accepted (>=, not >)."""
+    # partial_ratio("Apex Hoodie", "apex hodie") == 80.0
+    matcher = make_fuzzy_matcher(80.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("apex hodie")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_fuzzy_threshold_boundary_rejects_below():
+    """Text scoring exactly 80.0 is rejected when threshold is 81."""
+    # partial_ratio("Apex Hoodie", "apex hodie") == 80.0 < 81 → no match
+    matcher = make_fuzzy_matcher(81.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    entities = matcher.match("apex hodie")
+    assert entities == []
+
+
+def test_fuzzy_threshold_zero_always_matches():
+    """Threshold 0 accepts any non-empty text that scores >= 0."""
+    matcher = make_fuzzy_matcher(0.0, ("apex_hoodie", "Apex Hoodie", ["Apex Hoodie"]))
+    # Any text will score >= 0 with partial_ratio
+    entities = matcher.match("xyz")
+    assert len(entities) == 1
+    assert entities[0].key == "apex_hoodie"
+
+
+def test_fuzzy_tie_break_first_entity_wins():
+    """When two entity aliases score equally, the one with the higher score wins;
+    when tied, the first entity in the config list wins (strictly-greater comparison)."""
+    # partial_ratio("alpha corp", "alph corp") == 88.9  → entity_a wins
+    # partial_ratio("beta corp",  "alph corp") == 80.0  → entity_b loses
+    matcher = make_fuzzy_matcher(
+        80.0,
+        ("entity_a", "Alpha Corp", ["alpha corp"]),
+        ("entity_b", "Beta Corp", ["beta corp"]),
+    )
+    entities = matcher.match("alph corp")
+    assert len(entities) == 1
+    assert entities[0].key == "entity_a"

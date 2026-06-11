@@ -22,7 +22,7 @@ Immutable dataclasses use ``frozen=True``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,7 @@ class Signal:
     http_path: str
     original_body: bytes
     headers: dict[str, str]
+    valid_time: float | None = None
 
 
 @dataclass(frozen=True)
@@ -84,16 +85,33 @@ class EntityRecord:
     Attributes:
         entity_key: Normalized entity identifier.
         score: Current confidence score ``[0.0, score_cap]``.
-        last_seen: Unix epoch seconds of the most recent signal.
+        valid_time: Unix epoch seconds when the signal event actually occurred
+            (event time). Drives score decay.
+        transaction_time: Unix epoch seconds when Revok recorded the signal
+            (wall-clock write time). Always >= valid_time.
         signal_count: Total number of signals that referenced this entity.
         pattern_name: Pattern category from the most recent match.
+
+    Caller contract:
+        ``transaction_time >= valid_time`` must hold. Structurally guaranteed
+        by the write-time clamp in ``metadata_writer.enrich``. Not enforced
+        via ``__post_init__``.
     """
 
     entity_key: str
     score: float
-    last_seen: float
+    valid_time: float
+    transaction_time: float
     signal_count: int
     pattern_name: str
+    contradiction_count: int = 0
+    last_contradiction_time: float | None = None
+    last_value_fingerprint: str | None = None
+
+    @property
+    def last_seen(self) -> float:
+        """Backward-compat alias — returns ``valid_time``."""
+        return self.valid_time
 
 
 @dataclass
@@ -113,6 +131,7 @@ class EnrichedPayload:
     entities: list[EntityRecord]
     revok_version: str
     processed_at: float
+    original_bytes: bytes = field(default_factory=bytes)
 
     def to_upstream_dict(self) -> dict[str, object]:
         """Merge original body with the ``x_revok`` metadata block.
@@ -128,7 +147,7 @@ class EnrichedPayload:
                 "score": rec.score,
                 "signal_count": rec.signal_count,
                 "last_seen": datetime.datetime.fromtimestamp(
-                    rec.last_seen, tz=datetime.timezone.utc
+                    rec.valid_time, tz=datetime.timezone.utc
                 ).isoformat(),
                 "pattern_name": rec.pattern_name,
             }

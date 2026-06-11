@@ -39,8 +39,10 @@ First signal (no prior record):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
+import re
 
 from revok.config import ScoringConfig
 from revok.models import EntityRecord
@@ -67,8 +69,74 @@ class ScoringEngine:
         self._signal_strength = config.signal_strength
         self._score_cap = config.score_cap
         self._lambda = math.log(2) / config.half_life_seconds
+        self._contradiction_window_seconds = config.contradiction_window_seconds
+        self._contradiction_penalty = config.contradiction_penalty
 
-    def score(self, existing: EntityRecord | None, now: float) -> float:
+    @staticmethod
+    def extract_fingerprint(raw_content: str) -> str | None:
+        """Extract a canonical value fingerprint from signal content.
+
+        Tries to parse the first numeric value (optionally preceded by ``$``).
+        If found, normalises to ``str(float(value))`` so ``"$500"``, ``"500"``,
+        ``"500.0"``, and ``"$500.00"`` all produce ``"500.0"``.
+
+        Falls back to a lowercase SHA-256 hex digest of the entire content when
+        no numeric value is found.  Returns ``None`` when *raw_content* is
+        empty.
+
+        Args:
+            raw_content: Raw signal content string.
+
+        Returns:
+            Canonical fingerprint string, or ``None`` if *raw_content* is empty.
+        """
+        if not raw_content:
+            return None
+        match = re.search(r"\$?\s*(\d+(?:\.\d+)?)", raw_content)
+        if match:
+            return str(float(match.group(1)))
+        return hashlib.sha256(raw_content.lower().encode()).hexdigest()
+
+    def detect_contradiction(
+        self,
+        existing: EntityRecord | None,
+        new_fingerprint: str | None,
+        new_valid_time: float,
+    ) -> bool:
+        """Return ``True`` when a contradiction is detected.
+
+        A contradiction is detected when all of these conditions hold:
+
+        * *existing* is not ``None`` (there is a prior signal to compare against)
+        * both fingerprints are not ``None``
+        * the fingerprints differ (conflicting values)
+        * the gap between signals is **strictly less than** the configured window
+          (open interval — a gap equal to the window does not trigger)
+
+        Args:
+            existing: Prior entity record, or ``None`` for first signal.
+            new_fingerprint: Fingerprint of the incoming signal content.
+            new_valid_time: ``valid_time`` of the incoming signal.
+
+        Returns:
+            ``True`` if a contradiction is detected, ``False`` otherwise.
+        """
+        if existing is None:
+            return False
+        if new_fingerprint is None or existing.last_value_fingerprint is None:
+            return False
+        if new_fingerprint == existing.last_value_fingerprint:
+            return False
+        gap = new_valid_time - existing.valid_time
+        return gap < self._contradiction_window_seconds
+
+    def score(
+        self,
+        existing: EntityRecord | None,
+        now: float,
+        *,
+        is_contradiction: bool = False,
+    ) -> float:
         """Compute the new confidence score after a signal arrives.
 
         Signals degrade confidence (external change detected).  Between signals,
@@ -80,22 +148,31 @@ class ScoringEngine:
 
         For subsequent signals the previous score is first recovered toward
         ``score_cap`` according to elapsed time, then reduced by
-        ``signal_strength``.
+        ``signal_strength`` (and additionally by ``contradiction_penalty`` when
+        *is_contradiction* is ``True``).
 
         Args:
             existing: Current persisted ``EntityRecord``, or ``None``.
             now: Current Unix epoch timestamp in seconds.
+            is_contradiction: When ``True``, apply an additional
+                ``contradiction_penalty`` deduction on top of ``signal_strength``.
 
         Returns:
             New score in the range ``[0.0, score_cap]``.
         """
         if existing is None:
-            return max(0.0, self._score_cap - self._signal_strength)
+            base = max(0.0, self._score_cap - self._signal_strength)
+            if is_contradiction:
+                base = max(0.0, base - self._contradiction_penalty)
+            return base
 
-        delta_t = max(0.0, now - existing.last_seen)
+        delta_t = max(0.0, now - existing.valid_time)
         gap = self._score_cap - existing.score
         score_recovered = self._score_cap - gap * math.exp(-self._lambda * delta_t)
-        return max(0.0, score_recovered - self._signal_strength)
+        score_new = score_recovered - self._signal_strength
+        if is_contradiction:
+            score_new -= self._contradiction_penalty
+        return max(0.0, score_new)
 
     def decay_at(self, record: EntityRecord, now: float) -> float:
         """Return the current recovered confidence without applying a new signal.
@@ -111,6 +188,6 @@ class ScoringEngine:
             Recovered score in ``[0.0, score_cap]`` (no signal degradation
             applied).
         """
-        delta_t = max(0.0, now - record.last_seen)
+        delta_t = max(0.0, now - record.valid_time)
         gap = self._score_cap - record.score
         return self._score_cap - gap * math.exp(-self._lambda * delta_t)

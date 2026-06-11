@@ -21,7 +21,8 @@ from revok.config import (
     UpstreamConfig,
 )
 from revok.entity_matcher import EntityMatcher
-from revok.proxy import Mem0Adapter, build_app
+from revok.adapters import Mem0Adapter
+from revok.proxy import build_app
 from revok.scoring import ScoringEngine
 from revok.state_store import SqliteStateStore
 
@@ -36,7 +37,7 @@ def _config_with_upstream(mem0_url: str, tmp_path: Path) -> Config:
     return Config(
         server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
         upstream=UpstreamConfig(
-            mem0_url=mem0_url,
+            url=mem0_url,
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),
@@ -66,7 +67,7 @@ def _config_with_size_limit(mem0_url: str, tmp_path: Path, max_bytes: int) -> Co
             max_signal_size_bytes=max_bytes,
         ),
         upstream=UpstreamConfig(
-            mem0_url=mem0_url,
+            url=mem0_url,
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),
@@ -487,7 +488,7 @@ async def test_get_entity_returns_time_recovered_score(tmp_path: Path) -> None:
     config = Config(
         server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
         upstream=UpstreamConfig(
-            mem0_url="http://127.0.0.1:1",
+            url="http://127.0.0.1:1",
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),
@@ -518,7 +519,8 @@ async def test_get_entity_returns_time_recovered_score(tmp_path: Path) -> None:
         old_record = EntityRecord(
             entity_key="testentity",
             score=frozen_score,
-            last_seen=old_time,
+            valid_time=old_time,
+            transaction_time=old_time,
             signal_count=1,
             pattern_name="test",
         )
@@ -644,3 +646,79 @@ async def test_memory_write_still_goes_through_enrich(tmp_path: Path) -> None:
     # enrich() must have run — x_revok block must be present in upstream body
     assert len(captured) == 1
     assert "x_revok" in captured[0]
+
+
+# ---------------------------------------------------------------------------
+# Contradiction state in GET /v1/entities/{key} (T024)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_entity_response_includes_contradiction_fields(
+    tmp_path: Path,
+) -> None:
+    """GET response body contains contradiction_count and last_contradiction_time."""
+    from revok.models import EntityRecord
+
+    config = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    try:
+        rec = EntityRecord(
+            entity_key="orion_cache",
+            score=0.5,
+            valid_time=1000.0,
+            transaction_time=1000.0,
+            signal_count=3,
+            pattern_name="product",
+            contradiction_count=2,
+            last_contradiction_time=999.0,
+            last_value_fingerprint="450.0",
+        )
+        await store.put(rec)
+
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/entities/orion_cache")
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["contradiction_count"] == 2
+            assert body["last_contradiction_time"] == 999.0
+    finally:
+        await store.close()
+
+
+async def test_get_entity_response_excludes_last_value_fingerprint(
+    tmp_path: Path,
+) -> None:
+    """GET response must NOT include the internal last_value_fingerprint field."""
+    from revok.models import EntityRecord
+
+    config = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    try:
+        rec = EntityRecord(
+            entity_key="orion_cache",
+            score=0.5,
+            valid_time=1000.0,
+            transaction_time=1000.0,
+            signal_count=1,
+            pattern_name="product",
+            last_value_fingerprint="500.0",
+        )
+        await store.put(rec)
+
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/entities/orion_cache")
+            assert resp.status == 200
+            body = await resp.json()
+            assert "last_value_fingerprint" not in body
+    finally:
+        await store.close()

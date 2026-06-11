@@ -147,11 +147,14 @@ class StateStore(Protocol):
 class MemoryAdapter(Protocol):
     """Downstream adapter that forwards enriched writes and raw pass-throughs to Mem0."""
 
-    async def write(self, payload: EnrichedPayload) -> MemoryAdapterResponse:
+    async def write(
+        self, payload: EnrichedPayload, http_path: str = "/"
+    ) -> MemoryAdapterResponse:
         """Forward an enriched write payload to the upstream memory store.
 
         Args:
             payload: The enriched payload to forward.
+            http_path: Original request path (may include query string).
 
         Returns:
             MemoryAdapterResponse: The upstream HTTP response.

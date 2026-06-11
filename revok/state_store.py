@@ -43,11 +43,13 @@ logger = logging.getLogger(__name__)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS entity_records (
-    entity_key   TEXT    PRIMARY KEY,
-    score        REAL    NOT NULL DEFAULT 0.0,
-    last_seen    REAL    NOT NULL,
-    signal_count INTEGER NOT NULL DEFAULT 1,
-    pattern_name TEXT    NOT NULL DEFAULT ''
+    entity_key       TEXT    PRIMARY KEY,
+    score            REAL    NOT NULL DEFAULT 0.0,
+    last_seen        REAL    NOT NULL,
+    valid_time       REAL,
+    transaction_time REAL,
+    signal_count     INTEGER NOT NULL DEFAULT 1,
+    pattern_name     TEXT    NOT NULL DEFAULT ''
 );
 """
 
@@ -81,6 +83,20 @@ class SqliteStateStore:
             await self._db.execute("PRAGMA journal_mode=WAL;")
             await self._db.execute("PRAGMA synchronous=NORMAL;")
             await self._db.execute(_DDL)
+            _new_cols = [
+                ("valid_time", "REAL"),
+                ("transaction_time", "REAL"),
+                ("contradiction_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_contradiction_time", "REAL"),
+                ("last_value_fingerprint", "TEXT"),
+            ]
+            for _col, _col_type in _new_cols:
+                try:
+                    await self._db.execute(
+                        f"ALTER TABLE entity_records ADD COLUMN {_col} {_col_type}"
+                    )
+                except aiosqlite.OperationalError:
+                    pass  # column already exists
             await self._db.commit()
         except sqlite3.DatabaseError as exc:
             logger.critical(
@@ -120,7 +136,9 @@ class SqliteStateStore:
             "SqliteStateStore.open() must be called before get()"
         )
         async with self._db.execute(
-            "SELECT entity_key, score, last_seen, signal_count, pattern_name "
+            "SELECT entity_key, score, last_seen, valid_time, transaction_time, "
+            "signal_count, pattern_name, "
+            "contradiction_count, last_contradiction_time, last_value_fingerprint "
             "FROM entity_records WHERE entity_key = ?",
             (entity_key,),
         ) as cursor:
@@ -129,12 +147,17 @@ class SqliteStateStore:
         if row is None:
             return None
 
+        _legacy = row[2]
         record = EntityRecord(
             entity_key=row[0],
             score=row[1],
-            last_seen=row[2],
-            signal_count=row[3],
-            pattern_name=row[4],
+            valid_time=row[3] if row[3] is not None else _legacy,
+            transaction_time=row[4] if row[4] is not None else _legacy,
+            signal_count=row[5],
+            pattern_name=row[6],
+            contradiction_count=row[7] if row[7] is not None else 0,
+            last_contradiction_time=row[8],
+            last_value_fingerprint=row[9],
         )
         # Warm the hot layer with the raw (undecayed) record
         self._hot[entity_key] = record
@@ -156,19 +179,31 @@ class SqliteStateStore:
         )
         await self._db.execute(
             "INSERT INTO entity_records "
-            "  (entity_key, score, last_seen, signal_count, pattern_name) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "  (entity_key, score, last_seen, valid_time, transaction_time, "
+            "   signal_count, pattern_name, "
+            "   contradiction_count, last_contradiction_time, last_value_fingerprint) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(entity_key) DO UPDATE SET "
-            "  score        = excluded.score, "
-            "  last_seen    = excluded.last_seen, "
-            "  signal_count = excluded.signal_count, "
-            "  pattern_name = excluded.pattern_name",
+            "  score                    = excluded.score, "
+            "  last_seen                = excluded.last_seen, "
+            "  valid_time               = excluded.valid_time, "
+            "  transaction_time         = excluded.transaction_time, "
+            "  signal_count             = excluded.signal_count, "
+            "  pattern_name             = excluded.pattern_name, "
+            "  contradiction_count      = excluded.contradiction_count, "
+            "  last_contradiction_time  = excluded.last_contradiction_time, "
+            "  last_value_fingerprint   = excluded.last_value_fingerprint",
             (
                 record.entity_key,
                 record.score,
-                record.last_seen,
+                record.valid_time,
+                record.valid_time,
+                record.transaction_time,
                 record.signal_count,
                 record.pattern_name,
+                record.contradiction_count,
+                record.last_contradiction_time,
+                record.last_value_fingerprint,
             ),
         )
         await self._db.commit()
@@ -190,7 +225,8 @@ class SqliteStateStore:
         return EntityRecord(
             entity_key=record.entity_key,
             score=decayed,
-            last_seen=record.last_seen,
+            valid_time=record.valid_time,
+            transaction_time=record.transaction_time,
             signal_count=record.signal_count,
             pattern_name=record.pattern_name,
         )
@@ -217,7 +253,9 @@ class SqliteStateStore:
             "SqliteStateStore.open() must be called before list_all()"
         )
         async with self._db.execute(
-            "SELECT entity_key, score, last_seen, signal_count, pattern_name "
+            "SELECT entity_key, score, last_seen, valid_time, transaction_time, "
+            "signal_count, pattern_name, "
+            "contradiction_count, last_contradiction_time, last_value_fingerprint "
             "FROM entity_records ORDER BY entity_key LIMIT ? OFFSET ?",
             (limit, offset),
         ) as cursor:
@@ -227,9 +265,13 @@ class SqliteStateStore:
                 EntityRecord(
                     entity_key=row[0],
                     score=row[1],
-                    last_seen=row[2],
-                    signal_count=row[3],
-                    pattern_name=row[4],
+                    valid_time=row[3] if row[3] is not None else row[2],
+                    transaction_time=row[4] if row[4] is not None else row[2],
+                    signal_count=row[5],
+                    pattern_name=row[6],
+                    contradiction_count=row[7] if row[7] is not None else 0,
+                    last_contradiction_time=row[8],
+                    last_value_fingerprint=row[9],
                 )
             )
             for row in rows

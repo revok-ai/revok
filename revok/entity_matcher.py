@@ -26,6 +26,8 @@ from __future__ import annotations
 import logging
 import re
 
+from rapidfuzz import fuzz
+
 from revok.config import EntityMatcherConfig
 from revok.models import Entity
 
@@ -56,15 +58,18 @@ class EntityMatcher:
             (pat.name, re.compile(pat.regex)) for pat in config.patterns
         ]
         # Alias catalog: compile each alias as word-boundary case-insensitive regex.
-        # Tuple: (compiled_pattern, canonical_entity_id)
-        self._alias_patterns: list[tuple[re.Pattern[str], str]] = []
+        # Tuple: (compiled_pattern, canonical_entity_id, original_alias_string)
+        self._alias_patterns: list[tuple[re.Pattern[str], str, str]] = []
         for entity_def in config.entities:
             for alias in entity_def.aliases:
                 compiled = re.compile(
                     r"\b" + re.escape(alias) + r"\b",
                     re.IGNORECASE,
                 )
-                self._alias_patterns.append((compiled, entity_def.id))
+                self._alias_patterns.append((compiled, entity_def.id, alias))
+
+        # Fuzzy matching threshold (None = disabled)
+        self._fuzzy_threshold = config.fuzzy_match_threshold
 
         if not self._patterns and not self._alias_patterns:
             logger.warning(
@@ -90,7 +95,7 @@ class EntityMatcher:
         entities: list[Entity] = []
 
         # Alias catalog: key = canonical entity id (not raw matched text)
-        for pattern, canonical_id in self._alias_patterns:
+        for pattern, canonical_id, _alias in self._alias_patterns:
             for match in pattern.finditer(text):
                 if canonical_id and canonical_id not in seen_keys:
                     seen_keys.add(canonical_id)
@@ -102,7 +107,40 @@ class EntityMatcher:
                         )
                     )
 
-        # Legacy regex patterns: key = raw_text.lower().strip() (backward-compatible)
+        # When fuzzy matching is enabled it replaces the legacy regex path entirely.
+        if self._fuzzy_threshold is not None:
+            if entities:
+                # Exact alias match wins — skip both fuzzy scan and legacy regex.
+                return entities
+            # No exact match: try fuzzy scan across all alias strings.
+            best_score = -1.0
+            best_id = ""
+            best_alias = ""
+            for _pattern, canonical_id, alias_str in self._alias_patterns:
+                score = fuzz.partial_ratio(alias_str, text)
+                if score > best_score:
+                    best_score = score
+                    best_id = canonical_id
+                    best_alias = alias_str
+            if best_id and best_score >= self._fuzzy_threshold:
+                logger.debug(
+                    "Fuzzy match: text=%r → entity=%r alias=%r score=%.1f",
+                    text,
+                    best_id,
+                    best_alias,
+                    best_score,
+                )
+                return [Entity(key=best_id, raw_text=text, pattern_name="fuzzy")]
+            logger.debug(
+                "Fuzzy match: no match for text=%r (best score=%.1f < threshold=%.1f)",
+                text,
+                best_score,
+                self._fuzzy_threshold,
+            )
+            return []
+
+        # Legacy regex patterns: key = raw_text.lower().strip() (backward-compatible).
+        # Only reached when fuzzy_threshold is None; supplements alias catalog results.
         for name, pattern in self._patterns:
             for match in pattern.finditer(text):
                 raw_text = match.group()

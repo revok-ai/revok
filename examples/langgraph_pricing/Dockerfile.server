@@ -27,7 +27,6 @@ COPY examples/langgraph_pricing/server.py ./
 COPY examples/langgraph_pricing/agent.py ./
 COPY examples/langgraph_pricing/database.py ./
 COPY examples/langgraph_pricing/demo_state.py ./
-COPY examples/langgraph_pricing/calculator.html ./
 
 ENV PYTHONPATH=/app \
     DEMO_PORT=8081

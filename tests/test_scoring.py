@@ -46,7 +46,8 @@ def make_record(score: float, last_seen: float) -> EntityRecord:
     return EntityRecord(
         entity_key="alice",
         score=score,
-        last_seen=last_seen,
+        valid_time=last_seen,
+        transaction_time=last_seen,
         signal_count=1,
         pattern_name="person",
     )
@@ -208,3 +209,129 @@ def test_negative_half_life_raises_value_error():
         ScoringEngine(
             ScoringConfig(half_life_seconds=-1.0, signal_strength=0.3, score_cap=1.0)
         )
+
+
+# ---------------------------------------------------------------------------
+# Contradiction detection: _extract_fingerprint (T012)
+# ---------------------------------------------------------------------------
+
+CONTRADICTION_CONFIG = ScoringConfig(
+    half_life_seconds=HALF_LIFE,
+    signal_strength=SIGNAL_STRENGTH,
+    score_cap=SCORE_CAP,
+    contradiction_window_seconds=300.0,
+    contradiction_penalty=0.15,
+)
+
+
+def test_extract_fingerprint_dollar_price():
+    assert ScoringEngine.extract_fingerprint("$500/month") == "500.0"
+
+
+def test_extract_fingerprint_plain_decimal():
+    assert ScoringEngine.extract_fingerprint("price is 450.50 USD") == "450.5"
+
+
+def test_extract_fingerprint_no_numeric_uses_hash():
+    import hashlib
+
+    content = "user is authenticated"
+    expected = hashlib.sha256(content.lower().encode()).hexdigest()
+    assert ScoringEngine.extract_fingerprint(content) == expected
+
+
+def test_extract_fingerprint_empty_returns_none():
+    assert ScoringEngine.extract_fingerprint("") is None
+
+
+def test_extract_fingerprint_normalizes_formatting():
+    """$500, 500, 500.0, $500.00 all produce the same fingerprint."""
+    fp = ScoringEngine.extract_fingerprint
+    assert fp("$500") == fp("500") == fp("500.0") == fp("$500.00") == "500.0"
+
+
+# ---------------------------------------------------------------------------
+# Contradiction detection: detect_contradiction (T013)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def c_engine() -> ScoringEngine:
+    return ScoringEngine(CONTRADICTION_CONFIG)
+
+
+def make_contradictable_record(
+    fingerprint: str | None, valid_time: float = 1000.0
+) -> EntityRecord:
+    return EntityRecord(
+        entity_key="orion_cache",
+        score=0.8,
+        valid_time=valid_time,
+        transaction_time=valid_time,
+        signal_count=1,
+        pattern_name="product",
+        last_value_fingerprint=fingerprint,
+    )
+
+
+def test_detect_contradiction_within_window(c_engine):
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    assert c_engine.detect_contradiction(existing, "450.0", 1060.0) is True
+
+
+def test_detect_contradiction_at_window_boundary_no_contradiction(c_engine):
+    """gap == window is NOT a contradiction (strict open interval)."""
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    assert c_engine.detect_contradiction(existing, "450.0", 1300.0) is False  # gap=300
+
+
+def test_detect_contradiction_outside_window(c_engine):
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    assert c_engine.detect_contradiction(existing, "450.0", 1400.0) is False  # gap=400
+
+
+def test_detect_contradiction_agreeing_fingerprints(c_engine):
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    assert c_engine.detect_contradiction(existing, "500.0", 1060.0) is False
+
+
+def test_detect_contradiction_no_existing_record(c_engine):
+    assert c_engine.detect_contradiction(None, "500.0", 1060.0) is False
+
+
+def test_detect_contradiction_none_new_fingerprint(c_engine):
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    assert c_engine.detect_contradiction(existing, None, 1060.0) is False
+
+
+def test_detect_contradiction_none_existing_fingerprint(c_engine):
+    existing = make_contradictable_record(None, valid_time=1000.0)
+    assert c_engine.detect_contradiction(existing, "500.0", 1060.0) is False
+
+
+# ---------------------------------------------------------------------------
+# Contradiction penalty in score() (T014)
+# ---------------------------------------------------------------------------
+
+
+def test_score_with_contradiction_penalty_lower_than_without(c_engine):
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    score_normal = c_engine.score(existing, now=1060.0, is_contradiction=False)
+    score_contradiction = c_engine.score(existing, now=1060.0, is_contradiction=True)
+    assert score_contradiction < score_normal
+    assert score_contradiction == pytest.approx(score_normal - 0.15, abs=1e-9)
+
+
+def test_score_contradiction_floors_at_zero(c_engine):
+    """Even with large penalty, score never goes below 0.0."""
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    existing.score = 0.01  # type: ignore[assignment]
+    result = c_engine.score(existing, now=1000.0, is_contradiction=True)
+    assert result == pytest.approx(0.0)
+
+
+def test_score_existing_calls_unchanged_without_keyword(c_engine):
+    """Existing call sites that pass no keyword work as before."""
+    existing = make_contradictable_record("500.0", valid_time=1000.0)
+    result = c_engine.score(existing, now=1000.0)
+    assert result == pytest.approx(existing.score - SIGNAL_STRENGTH)

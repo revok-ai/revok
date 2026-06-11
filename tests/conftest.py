@@ -48,7 +48,7 @@ def minimal_config(tmp_path: Path) -> Config:
             startup_timeout_seconds=5.0,
         ),
         upstream=UpstreamConfig(
-            mem0_url="http://localhost:8000",
+            url="http://localhost:8000",
             write_methods=["POST"],
             write_paths=["/v1/memories"],
         ),

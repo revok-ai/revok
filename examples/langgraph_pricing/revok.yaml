@@ -5,7 +5,7 @@ server:
   max_signal_size_bytes: 1048576
 
 upstream:
-  mem0_url: "http://mem0:8000"
+  url: "http://mem0:8000"
   write_methods:
     - "POST"
     - "PUT"
@@ -61,6 +61,9 @@ scoring:
   # This lets the demo show the full fresh → degraded → stale progression.
   signal_strength: 0.4
   score_cap: 1.0
+  # Flag a contradiction when two conflicting prices arrive within this window.
+  contradiction_window_seconds: 300
+  contradiction_penalty: 0.15
 
 state_store:
   sqlite_path: "/data/revok_langgraph_demo.db"

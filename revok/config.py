@@ -56,17 +56,19 @@ class ServerConfig:
 
 @dataclass(frozen=True)
 class UpstreamConfig:
-    """Mem0 upstream target and write-detection settings.
+    """Upstream target and write-detection settings (Mem0 and Zep).
 
     Attributes:
-        mem0_url: Validated HTTP/HTTPS base URL.
+        url: Validated HTTP/HTTPS base URL.
         write_methods: HTTP methods that trigger enrichment (e.g., ``["POST"]``).
         write_paths: URL path prefixes that trigger enrichment.
+            Required (non-empty) for Mem0 mode. Optional for Zep mode
+            (the active gate is the session-path anchor in the proxy).
     """
 
-    mem0_url: str
+    url: str
     write_methods: list[str]
-    write_paths: list[str]
+    write_paths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,7 @@ class EntityMatcherConfig:
 
     entities: list[EntityDef] = field(default_factory=list)
     patterns: list[PatternConfig] = field(default_factory=list)
+    fuzzy_match_threshold: float | None = None
 
 
 @dataclass(frozen=True)
@@ -131,11 +134,19 @@ class ScoringConfig:
         half_life_seconds: Decay half-life (must be > 0).
         signal_strength: Score boost per signal (must be > 0).
         score_cap: Maximum entity score (must be > 0).
+        contradiction_window_seconds: Time window (seconds) within which two
+            conflicting signals are treated as a contradiction (strict open
+            interval: ``gap < window``). Defaults to 300.0 (5 minutes).
+        contradiction_penalty: Additional score penalty applied on top of
+            ``signal_strength`` when a contradiction is detected. Defaults to
+            0.15.
     """
 
     half_life_seconds: float
     signal_strength: float
     score_cap: float
+    contradiction_window_seconds: float = 300.0
+    contradiction_penalty: float = 0.15
 
 
 @dataclass(frozen=True)
@@ -183,6 +194,7 @@ class Config:
     scoring: ScoringConfig
     state_store: StateStoreConfig
     logging: LoggingConfig
+    adapter_type: str = "mem0"
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +268,13 @@ def load_config(path: str) -> Config:
             f"Config file '{path}' must be a YAML mapping at the top level."
         )
 
+    # --- adapter_type ---
+    adapter_type = str(data.get("adapter_type") or "mem0").lower()
+    if adapter_type not in ("mem0", "zep"):
+        raise ConfigError(
+            f"adapter_type must be 'mem0' or 'zep'; got '{adapter_type}'."
+        )
+
     # --- server ---
     srv = _require(data, "server")
     host = _require(srv, "host", context="server")
@@ -279,25 +298,33 @@ def load_config(path: str) -> Config:
     )
 
     # --- upstream ---
-    up = _require(data, "upstream")
-    mem0_url = _require(up, "mem0_url", context="upstream")
-    write_methods = _require(up, "write_methods", context="upstream")
-    write_paths = _require(up, "write_paths", context="upstream")
+    up_raw = data.get("upstream")
+    if up_raw is None:
+        raise ConfigError("Missing required config key: upstream")
+    if not isinstance(up_raw, dict):
+        raise ConfigError("'upstream' must be a YAML mapping.")
 
-    parsed = urllib.parse.urlparse(str(mem0_url))
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    up_url = _require(up_raw, "url", context="upstream")
+    write_methods_up = _require(up_raw, "write_methods", context="upstream")
+
+    parsed_up = urllib.parse.urlparse(str(up_url))
+    if parsed_up.scheme not in ("http", "https") or not parsed_up.netloc:
         raise ConfigError(
-            f"upstream.mem0_url must be a valid HTTP/HTTPS URL; got '{mem0_url}'."
+            f"upstream.url must be a valid HTTP/HTTPS URL; got '{up_url}'."
         )
-    if not isinstance(write_methods, list) or not write_methods:
+    if not isinstance(write_methods_up, list) or not write_methods_up:
         raise ConfigError("upstream.write_methods must be a non-empty list.")
-    if not isinstance(write_paths, list) or not write_paths:
+
+    write_paths_up = up_raw.get("write_paths") or []
+    if not isinstance(write_paths_up, list):
+        raise ConfigError("upstream.write_paths must be a list.")
+    if adapter_type == "mem0" and not write_paths_up:
         raise ConfigError("upstream.write_paths must be a non-empty list.")
 
     upstream_cfg = UpstreamConfig(
-        mem0_url=str(mem0_url).rstrip("/"),
-        write_methods=[str(m).upper() for m in write_methods],
-        write_paths=[str(p) for p in write_paths],
+        url=str(up_url).rstrip("/"),
+        write_methods=[str(m).upper() for m in write_methods_up],
+        write_paths=[str(p) for p in write_paths_up],
     )
 
     # --- entity_matcher (optional) ---
@@ -305,6 +332,7 @@ def load_config(path: str) -> Config:
     em_raw = data.get("entity_matcher")
     entity_defs: list[EntityDef] = []
     pattern_cfgs: list[PatternConfig] = []
+    fuzzy_threshold: float | None = None
 
     if em_raw is not None:
         if not isinstance(em_raw, dict):
@@ -355,8 +383,21 @@ def load_config(path: str) -> Config:
                 ) from exc
             pattern_cfgs.append(PatternConfig(name=str(name), regex=str(regex)))
 
+        fuzzy_raw = em_raw.get("fuzzy_match_threshold")
+        if fuzzy_raw is not None:
+            if not isinstance(fuzzy_raw, (int, float)) or not (
+                0 <= float(fuzzy_raw) <= 100
+            ):
+                raise ConfigError(
+                    f"entity_matcher.fuzzy_match_threshold must be between 0 and "
+                    f"100, got {fuzzy_raw}"
+                )
+            fuzzy_threshold = float(fuzzy_raw)
+
     entity_matcher_cfg = EntityMatcherConfig(
-        entities=entity_defs, patterns=pattern_cfgs
+        entities=entity_defs,
+        patterns=pattern_cfgs,
+        fuzzy_match_threshold=fuzzy_threshold,
     )
 
     # --- scoring ---
@@ -372,10 +413,15 @@ def load_config(path: str) -> Config:
     if not isinstance(score_cap, (int, float)) or float(score_cap) <= 0:
         raise ConfigError("scoring.score_cap must be > 0.")
 
+    contradiction_window = sc.get("contradiction_window_seconds", 300.0)
+    contradiction_penalty_val = sc.get("contradiction_penalty", 0.15)
+
     scoring_cfg = ScoringConfig(
         half_life_seconds=float(half_life),
         signal_strength=float(signal_strength),
         score_cap=float(score_cap),
+        contradiction_window_seconds=float(contradiction_window),
+        contradiction_penalty=float(contradiction_penalty_val),
     )
 
     # --- state_store ---
@@ -407,4 +453,5 @@ def load_config(path: str) -> Config:
         scoring=scoring_cfg,
         state_store=state_store_cfg,
         logging=logging_cfg,
+        adapter_type=adapter_type,
     )

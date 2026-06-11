@@ -69,6 +69,17 @@ async def enrich(
 
     now = time.time()
 
+    # Resolve valid_time: use signal.valid_time if set, else signal arrival time.
+    # Clamp future-dated values to now (transaction_time) and warn.
+    raw_valid_time: float = signal.valid_time if signal.valid_time is not None else now
+    if raw_valid_time > now:
+        logger.warning(
+            "valid_time %.3f is in the future (transaction_time=%.3f); clamping",
+            raw_valid_time,
+            now,
+        )
+        raw_valid_time = now
+
     # --- Step 1: parse original body ----------------------------------------
     original_body: dict[str, object] = {}
     try:
@@ -107,14 +118,34 @@ async def enrich(
             entities = matcher.match(signal.raw_content)
         for entity in entities:
             existing = await store.get(entity.key)
-            new_score = scorer.score(existing, now)
+            new_fingerprint = scorer.extract_fingerprint(signal.raw_content)
+            is_contradiction = scorer.detect_contradiction(
+                existing, new_fingerprint, raw_valid_time
+            )
+            new_score = scorer.score(existing, now, is_contradiction=is_contradiction)
             signal_count = (existing.signal_count + 1) if existing is not None else 1
+            if is_contradiction:
+                contradiction_count = (
+                    (existing.contradiction_count + 1) if existing is not None else 1
+                )
+                last_contradiction_time: float | None = raw_valid_time
+            else:
+                contradiction_count = (
+                    existing.contradiction_count if existing is not None else 0
+                )
+                last_contradiction_time = (
+                    existing.last_contradiction_time if existing is not None else None
+                )
             record = EntityRecord(
                 entity_key=entity.key,
                 score=new_score,
-                last_seen=now,
+                valid_time=raw_valid_time,
+                transaction_time=now,
                 signal_count=signal_count,
                 pattern_name=entity.pattern_name,
+                contradiction_count=contradiction_count,
+                last_contradiction_time=last_contradiction_time,
+                last_value_fingerprint=new_fingerprint,
             )
             await store.put(record)
             scored_records.append(record)
@@ -132,4 +163,5 @@ async def enrich(
         entities=scored_records,
         revok_version=__version__,
         processed_at=now,
+        original_bytes=signal.original_body,
     )

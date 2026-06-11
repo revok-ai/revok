@@ -28,26 +28,21 @@ import dataclasses
 import json
 import logging
 import time
-import urllib.parse
 
 import aiohttp
 import aiohttp.hdrs
 import aiohttp.web
 
-from revok.config import Config, UpstreamConfig
+from revok.adapters import AdapterClass, _REGISTRY, build_adapter
+from revok.config import Config
 from revok.entity_matcher import EntityMatcher
 from revok.interfaces import StateStore
 from revok.metadata_writer import enrich
-from revok.models import EnrichedPayload, MemoryAdapterResponse, Signal
+from revok.models import Signal
 from revok.scoring import ScoringEngine
 from revok.signal_queue import AsyncioQueueBus
 
 logger = logging.getLogger(__name__)
-
-_502_BODY: bytes = json.dumps(
-    {"error": "upstream_unavailable", "detail": "Mem0 endpoint is not reachable"}
-).encode()
-_502_HEADERS: dict[str, str] = {"Content-Type": "application/json"}
 
 # Hop-by-hop headers that MUST NOT be forwarded to the client (RFC 7230 §6.1)
 _HOP_BY_HOP: frozenset[str] = frozenset(
@@ -62,124 +57,6 @@ _HOP_BY_HOP: frozenset[str] = frozenset(
         "upgrade",
     }
 )
-
-
-class Mem0Adapter:
-    """Upstream Mem0 HTTP adapter implementing the MemoryAdapter Protocol.
-
-    Uses ``aiohttp.ClientSession`` to forward enriched writes and raw
-    pass-through requests to the configured Mem0 base URL.
-
-    Attributes:
-        _config: Upstream Mem0 configuration.
-        _session: Shared aiohttp client session (caller-managed lifetime).
-        _closed: Whether ``close()`` has already been called.
-    """
-
-    def __init__(self, config: UpstreamConfig, session: aiohttp.ClientSession) -> None:
-        """Initialise the adapter.
-
-        Args:
-            config: Upstream Mem0 URL and write-detection settings.
-            session: aiohttp client session to use for all upstream requests.
-        """
-        self._config = config
-        self._session = session
-        self._closed = False
-
-    async def write(
-        self,
-        payload: EnrichedPayload,
-        http_path: str = "/",
-    ) -> MemoryAdapterResponse:
-        """POST an enriched payload to Mem0 at ``mem0_url + http_path``.
-
-        The payload is serialised to JSON via
-        :meth:`~revok.models.EnrichedPayload.to_upstream_dict`.
-
-        Args:
-            payload: Enriched payload ready for serialisation and forwarding.
-            http_path: Original request path (may include query string).
-
-        Returns:
-            :class:`~revok.models.MemoryAdapterResponse` from Mem0.
-            Never raises on upstream HTTP or connection errors.
-        """
-        url = self._config.mem0_url.rstrip("/") + http_path
-        body_bytes = json.dumps(payload.to_upstream_dict()).encode()
-        try:
-            async with self._session.post(
-                url,
-                data=body_bytes,
-                headers={"Content-Type": "application/json"},
-                allow_redirects=False,
-            ) as resp:
-                resp_body = await resp.read()
-                return MemoryAdapterResponse(
-                    status=resp.status,
-                    body=resp_body,
-                    headers=dict(resp.headers),
-                    is_error=resp.status >= 400,
-                )
-        except aiohttp.ClientConnectorError:
-            logger.error("Mem0 upstream unreachable at %s", url)
-            return MemoryAdapterResponse(
-                status=502,
-                body=_502_BODY,
-                headers=_502_HEADERS,
-                is_error=True,
-            )
-
-    async def forward(self, signal: Signal) -> MemoryAdapterResponse:
-        """Forward a raw signal to Mem0 unchanged.
-
-        The original request body, method, and all headers (except ``Host``,
-        which is rewritten to the upstream host) are forwarded verbatim.
-
-        Args:
-            signal: The original signal including method, path, headers, body.
-
-        Returns:
-            :class:`~revok.models.MemoryAdapterResponse` from Mem0.
-            Never raises on upstream HTTP or connection errors.
-        """
-        url = self._config.mem0_url.rstrip("/") + signal.http_path
-        headers = dict(signal.headers)
-        # Rewrite Host to upstream host per proxy-api.md §Headers
-        parsed = urllib.parse.urlparse(self._config.mem0_url)
-        headers["Host"] = parsed.netloc
-
-        body = signal.original_body if signal.original_body else None
-
-        try:
-            async with self._session.request(
-                method=signal.http_method,
-                url=url,
-                data=body,
-                headers=headers,
-                allow_redirects=False,
-            ) as resp:
-                resp_body = await resp.read()
-                return MemoryAdapterResponse(
-                    status=resp.status,
-                    body=resp_body,
-                    headers=dict(resp.headers),
-                    is_error=resp.status >= 400,
-                )
-        except aiohttp.ClientConnectorError:
-            logger.error("Mem0 upstream unreachable at %s", url)
-            return MemoryAdapterResponse(
-                status=502,
-                body=_502_BODY,
-                headers=_502_HEADERS,
-                is_error=True,
-            )
-
-    async def close(self) -> None:
-        """Close the underlying HTTP session (idempotent)."""
-        if not self._closed:
-            await self._session.close()
-            self._closed = True
 
 
 def build_app(
@@ -219,9 +96,7 @@ def build_app(
         :class:`aiohttp.web.Application` ready for
         :class:`aiohttp.web.AppRunner`.
     """
-    write_methods: frozenset[str] = frozenset(
-        m.upper() for m in config.upstream.write_methods
-    )
+    adapter_cls: AdapterClass = _REGISTRY[config.adapter_type]
 
     _bus = bus if bus is not None else AsyncioQueueBus()
 
@@ -238,6 +113,7 @@ def build_app(
                 body=json.dumps({"error": "not_found"}).encode(),
             )
         data = dataclasses.asdict(record)
+        data.pop("last_value_fingerprint", None)
         data["score"] = scorer.decay_at(record, time.time())
         return aiohttp.web.Response(
             status=200,
@@ -359,9 +235,13 @@ def build_app(
             )
 
         # FR-004: Normalise raw request into Signal before any other processing
+        source_id, raw_content = adapter_cls.extract_signal_context(
+            request.path, dict(request.headers), body_bytes
+        )
+
         signal = Signal(
-            raw_content=body_bytes.decode("utf-8", errors="replace"),
-            source_id=request.headers.get("X-Agent-ID", "unknown"),
+            raw_content=raw_content,
+            source_id=source_id,
             timestamp=time.time(),
             http_method=request.method,
             http_path=http_path,
@@ -370,10 +250,9 @@ def build_app(
         )
 
         async with aiohttp.ClientSession() as session:
-            adapter = Mem0Adapter(config.upstream, session)
-
-            is_write = signal.http_method.upper() in write_methods and any(
-                request.path.startswith(p) for p in config.upstream.write_paths
+            _adapter = build_adapter(config.adapter_type, config.upstream, session)
+            is_write = adapter_cls.is_write_request(
+                signal.http_method, request.path, config.upstream
             )
 
             if is_write:
@@ -387,13 +266,13 @@ def build_app(
                         http_path,
                         len(body_bytes),
                     )
-                    result = await adapter.forward(signal)
+                    result = await _adapter.forward(signal)
                 else:
                     # enrich() is internally resilient and never raises (scenario 1.4)
                     enriched = await enrich(signal, matcher, scorer, store)
-                    result = await adapter.write(enriched, http_path)
+                    result = await _adapter.write(enriched, http_path)
             else:
-                result = await adapter.forward(signal)
+                result = await _adapter.forward(signal)
 
         # Strip hop-by-hop headers before returning to client
         safe_headers = {
