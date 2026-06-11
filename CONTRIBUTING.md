@@ -49,8 +49,9 @@ The following packages must never appear in `revok/` or `tests/`:
 | `confluent_kafka` | Managed cloud SDK — enterprise tier only |
 | `requests` | Sync I/O — all network I/O must use `aiohttp` |
 | `spacy` | Heavyweight NLP — OSS uses `re` only |
-| `rapidfuzz` | Fuzzy match — permitted in `revok/entity_matcher.py` only; do not add to other modules |
 | `redis` | External cache — OSS uses Python `dict` + SQLite WAL |
+
+> **Note:** `rapidfuzz` is planned for v0.2.0 as an OSS enhancement to the entity matcher.
 
 ### Forbidden features
 
@@ -188,7 +189,7 @@ requesting review.
 ### OSS boundary check
 - [ ] No `azure`, `boto3`, `botocore`, `google.cloud`, or `confluent_kafka` imports added
 - [ ] No `requests` imports added (async I/O uses `aiohttp` only)
-- [ ] No `spacy` or `redis` imports added (exception: `rapidfuzz` is permitted in `entity_matcher.py` only)
+- [ ] No `spacy` or `redis` imports added
 - [ ] No multi-tenancy, SSO, RBAC, audit logging, or SaaS dashboard code added
 - [ ] No managed cloud signal source implementations added
 
