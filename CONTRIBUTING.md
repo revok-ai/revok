@@ -14,6 +14,23 @@ a PR.
 
 ---
 
+## Branching strategy
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Stable releases only — never commit directly |
+| `develop` | Active development — all feature PRs target here |
+| `feat/*` | New features — branch from `develop` |
+| `fix/*` | Bug fixes — branch from `develop` |
+| `docs/*` | Documentation — branch from `develop` |
+| `chore/*` | Maintenance — branch from `develop` |
+| `release/*` | Release prep — branch from `develop`, merges to `main` |
+
+Feature branches are deleted automatically after merge.
+Spec Kit branches (`001-*`, `002-*`) are auto-created by Spec Kit and target `develop`.
+
+---
+
 ## OSS boundary
 
 Revok is AGPL v3. The OSS repo contains the core proxy pipeline and the
@@ -32,7 +49,7 @@ The following packages must never appear in `revok/` or `tests/`:
 | `confluent_kafka` | Managed cloud SDK — enterprise tier only |
 | `requests` | Sync I/O — all network I/O must use `aiohttp` |
 | `spacy` | Heavyweight NLP — OSS uses `re` only |
-| `rapidfuzz` | Third-party fuzzy match — OSS uses stdlib only |
+| `rapidfuzz` | Fuzzy match — permitted in `revok/entity_matcher.py` only; do not add to other modules |
 | `redis` | External cache — OSS uses Python `dict` + SQLite WAL |
 
 ### Forbidden features
@@ -56,8 +73,9 @@ writing code.
 
 ## How to contribute
 
-1. **Fork** the repository and create a branch from `main`:
+1. **Fork** the repository and create a branch from `develop`:
    ```
+   git checkout develop
    git checkout -b feat/your-feature-name
    ```
      Both of the following branch naming conventions are valid:
@@ -82,7 +100,7 @@ writing code.
    ```
    All three must pass with zero errors.
 
-5. **Open a Pull Request** against `main`. Fill in the PR checklist (below).
+5. **Open a Pull Request** against `develop`. Fill in the PR checklist (below).
    PRs without a completed checklist will not be reviewed.
 
 6. **Address review feedback.** Maintainers may request changes; please
@@ -170,7 +188,7 @@ requesting review.
 ### OSS boundary check
 - [ ] No `azure`, `boto3`, `botocore`, `google.cloud`, or `confluent_kafka` imports added
 - [ ] No `requests` imports added (async I/O uses `aiohttp` only)
-- [ ] No `spacy`, `rapidfuzz`, or `redis` imports added
+- [ ] No `spacy` or `redis` imports added (exception: `rapidfuzz` is permitted in `entity_matcher.py` only)
 - [ ] No multi-tenancy, SSO, RBAC, audit logging, or SaaS dashboard code added
 - [ ] No managed cloud signal source implementations added
 
@@ -188,7 +206,7 @@ requesting review.
 - [ ] Tests do not make real network calls
 
 ### General
-- [ ] PR targets `main`
+- [ ] PR targets `develop` (or `main` for hotfixes only)
 - [ ] Branch name uses a valid prefix (`feat/`, `fix/`, `test/`, `docs/`, `refactor/`)
 - [ ] Commit messages are descriptive
 ```
