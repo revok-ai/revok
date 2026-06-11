@@ -51,7 +51,7 @@ The following packages must never appear in `revok/` or `tests/`:
 | `spacy` | Heavyweight NLP — OSS uses `re` only |
 | `redis` | External cache — OSS uses Python `dict` + SQLite WAL |
 
-> **Note:** `rapidfuzz` is planned for v0.2.0 as an OSS enhancement to the entity matcher.
+> **Note:** `rapidfuzz` added in v0.2.0 as an OSS enhancement to the entity matcher.
 
 ### Forbidden features
 
