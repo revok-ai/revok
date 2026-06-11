@@ -7,6 +7,23 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.0] — 2026-06-11
+
+### Added
+- Zep CE memory adapter — `revok/adapters/zep.py`
+- Bitemporal scoring — `valid_time` and `transaction_time` tracking, decay anchored to event time
+- Contradiction detection with configurable confidence penalty
+- Fuzzy entity matching via `rapidfuzz`
+- GitHub Actions CI workflow with OSS boundary check
+- GitFlow branch policy enforcement
+- Branching strategy documented in `CONTRIBUTING.md`
+
+### Changed
+- Adapter registry refactored for Open/Closed principle
+- Test suite expanded from 119 to 248 tests
+
+---
+
 ## [0.1.1] — 2026-06-06
 
 ### Fixed

@@ -13,7 +13,8 @@ jobs:
         run: |
           SOURCE="${{ github.head_ref }}"
           if [[ "$SOURCE" =~ ^(feat|fix|chore|refactor|docs|test|perf|ci|build|style)/ ]] || \
-             [[ "$SOURCE" =~ ^[0-9]+-.*$ ]]; then
+             [[ "$SOURCE" =~ ^[0-9]+-.*$ ]] || \
+             [[ "$SOURCE" == "main" ]]; then
             echo "✓ '$SOURCE' is allowed to merge into develop"
           else
             echo "✗ '$SOURCE' cannot merge into develop"
