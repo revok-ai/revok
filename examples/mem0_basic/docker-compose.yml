@@ -45,7 +45,9 @@ services:
 
   # ── Revok: transparent proxy + entity scoring (port 7771 on host) ─────────
   revok:
-    image: robertopc2/revok:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile
     ports:
       - "7771:7771"
     volumes:

@@ -39,7 +39,7 @@ EXPOSE 7771
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c \
         "import urllib.request, sys; \
-         r = urllib.request.urlopen('http://localhost:7771/health', timeout=4); \
+         r = urllib.request.urlopen('http://localhost:7771/v1/entities', timeout=4); \
          sys.exit(0 if r.status == 200 else 1)"
 
 CMD ["python", "-m", "revok", "--config", "/config/revok.yaml"]

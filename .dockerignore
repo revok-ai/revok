@@ -16,6 +16,10 @@ examples/
 !examples/langgraph_pricing/agent.py
 !examples/langgraph_pricing/database.py
 !examples/langgraph_pricing/demo_state.py
+!examples/agentframework_pricing/server.py
+!examples/agentframework_pricing/agent.py
+!examples/agentframework_pricing/database.py
+!examples/agentframework_pricing/demo_state.py
 tests/
 *.md
 .gitignore

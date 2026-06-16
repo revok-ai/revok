@@ -38,7 +38,9 @@ services:
       retries: 20
 
   revok:
-    image: robertopc2/revok:latest
+    build:
+      context: ../..
+      dockerfile: Dockerfile
     ports:
       - "${REVOK_HOST_PORT:-7771}:7771"
     volumes:
