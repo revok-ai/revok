@@ -8,6 +8,7 @@ import { DataLayer } from "@/components/DataLayer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EventLog } from "@/components/EventLog";
 import { ProductCatalog } from "@/components/ProductCatalog";
+import { RevokInspector } from "@/components/RevokInspector";
 import { useSSE } from "@/hooks/useSSE";
 
 export default function Page() {
@@ -45,6 +46,10 @@ export default function Page() {
 
         <ErrorBoundary label="Product Catalog">
           <ProductCatalog products={state?.products ?? []} />
+        </ErrorBoundary>
+
+        <ErrorBoundary label="Revok Inspector">
+          <RevokInspector state={state} />
         </ErrorBoundary>
 
         <ErrorBoundary label="Event Log">

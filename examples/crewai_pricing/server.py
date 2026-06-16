@@ -1071,6 +1071,7 @@ async def _build_state_snapshot() -> dict[str, Any]:
                 "confidence_score": p_score,
                 "confidence_status": p_status,
                 "signal_count": p_sig,
+                "last_signal_at": float(ent["transaction_time"]) if ent and ent.get("transaction_time") else None,
             }
         )
 
