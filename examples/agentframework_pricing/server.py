@@ -247,69 +247,84 @@ async def _heal_pricing_memory(
     writes a fresh entry with the correct *live_price*.  Runs directly
     against AMS (bypassing the Revok proxy) so there is no scoring overhead
     that could confuse dedup.
+
+    Uses the same search→delete-by-ID approach as _purge_user_memories:
+    - keyword search with session_id filter (bulk search with query= is broken)
+    - single-ID deletes with a fresh ClientSession per request (bulk delete is broken)
     """
     ams_url = os.getenv("AMS_URL", "http://localhost:8000")
     keyword = product_name.lower()
-    async with aiohttp.ClientSession() as session:
-        # 1. Search for existing memories about this product
-        try:
-            async with session.post(
-                f"{ams_url}/v1/long-term-memory/search",
-                json={
-                    "query": product_name,
-                    "session_id": user_id,
-                    "namespace": "pricing",
-                    "top_k": 20,
-                },
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-        except Exception as exc:
-            _log.warning("_heal_pricing_memory: search failed for %s: %s", user_id, exc)
-            return
-        memories = data if isinstance(data, list) else data.get("results", [])
+    # Cast a wide net — same terms as _purge_user_memories, but only keep
+    # entries that actually mention this product.
+    search_terms = [product_name, "Customer", "price", "approved", "budget"]
+    seen_ids: set[str] = set()
 
-        # 2. Delete any entries mentioning the product
-        stale_ids = [
-            m.get("id")
-            for m in memories
-            if keyword
-            in (m.get("text") or m.get("memory") or m.get("content") or "").lower()
-            and m.get("id")
-        ]
-        if stale_ids:
-            try:
-                async with session.delete(
-                    f"{ams_url}/v1/long-term-memory",
-                    json={"memory_ids": stale_ids},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as del_resp:
-                    _log.info(
-                        "_heal_pricing_memory: deleted %d stale entries for %s",
-                        len(stale_ids),
-                        user_id,
+    # 1. Search for all pricing memories for this user, filter to this product
+    try:
+        for term in search_terms:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(
+                    f"{ams_url}/v1/long-term-memory/search",
+                    json={
+                        "text": term,
+                        "search_mode": "keyword",
+                        "session_id": {"eq": user_id},
+                        "limit": 100,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status >= 300:
+                        continue
+                    data = await resp.json()
+                    mems = (
+                        data
+                        if isinstance(data, list)
+                        else data.get("memories", data.get("results", []))
                     )
-                    if del_resp.status >= 300:
-                        _log.warning(
-                            "_heal_pricing_memory: delete returned %s", del_resp.status
-                        )
-            except Exception as exc:
-                _log.warning("_heal_pricing_memory: delete failed: %s", exc)
-            await asyncio.sleep(1.0)
+                    for m in mems:
+                        text = (
+                            m.get("text") or m.get("memory") or m.get("content") or ""
+                        ).lower()
+                        if keyword in text and m.get("id"):
+                            seen_ids.add(m["id"])
+    except Exception as exc:
+        _log.warning("_heal_pricing_memory: search failed for %s: %s", user_id, exc)
+        return
 
-        # 3. Write fresh corrected memory directly to AMS (no Revok proxy)
-        content = (
-            f"Customer budget approved {product_name} at ${live_price:.0f}/month. "
-            "Verified pricing from database."
-        )
-        await _store_directly_to_ams(session, ams_url, user_id, content)
-        _log.info(
-            "_heal_pricing_memory: wrote healed memory for %s/%s @ $%.0f",
-            user_id,
-            product_name,
-            live_price,
-        )
+    # 2. Delete each stale memory individually (bulk delete is broken in AMS)
+    deleted = 0
+    for mem_id in seen_ids:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.delete(
+                    f"{ams_url}/v1/long-term-memory",
+                    params=[("memory_ids", mem_id)],
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status < 300:
+                        deleted += 1
+        except Exception:
+            pass
+
+    if seen_ids:
+        # Give AMS a moment to propagate the deletes before writing the new entry
+        await asyncio.sleep(1.0)
+
+    # 3. Write fresh corrected memory directly to AMS (no Revok proxy)
+    content = (
+        f"Customer budget approved {product_name} at ${live_price:.0f}/month. "
+        "Verified pricing from database."
+    )
+    async with aiohttp.ClientSession() as s:
+        await _store_directly_to_ams(s, ams_url, user_id, content)
+    _log.info(
+        "_heal_pricing_memory: replaced %d/%d memories for %s/%s @ $%.0f",
+        deleted,
+        len(seen_ids),
+        user_id,
+        product_name,
+        live_price,
+    )
 
 
 async def _store_directly_to_ams(
@@ -1240,6 +1255,7 @@ async def _build_state_snapshot() -> dict[str, Any]:
                 "confidence_score": p_score,
                 "confidence_status": p_status,
                 "signal_count": p_sig,
+                "last_signal_at": float(ent["transaction_time"]) if ent and ent.get("transaction_time") else None,
             }
         )
 

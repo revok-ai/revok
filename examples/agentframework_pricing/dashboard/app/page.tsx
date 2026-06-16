@@ -6,6 +6,7 @@ import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { ControlPanel } from "@/components/ControlPanel";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EventLog } from "@/components/EventLog";
+import { RevokInspector } from "@/components/RevokInspector";
 import { StatusStrip } from "@/components/StatusStrip";
 import { useAgUiRun } from "@/hooks/useAgUiRun";
 import { useSSE } from "@/hooks/useSSE";
@@ -64,6 +65,11 @@ export default function Page() {
         {/* ── Hero: agent comparison ──────────────────────────────── */}
         <ErrorBoundary label="Agent Comparison">
           <AgentComparison state={state} agUiState={agUiState} />
+        </ErrorBoundary>
+
+        {/* ── Revok Inspector ─────────────────────────────────────── */}
+        <ErrorBoundary label="Revok Inspector">
+          <RevokInspector state={state} />
         </ErrorBoundary>
 
         {/* ── Event log ───────────────────────────────────────────── */}
