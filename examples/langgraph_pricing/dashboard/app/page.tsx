@@ -16,18 +16,22 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-[#0f1117] px-4 py-6 md:px-8 md:py-8">
-      <ConnectionStatus status={status} state={state} />
+      <div className="mx-auto max-w-[1200px] space-y-6">
 
-      <div className="mx-auto max-w-7xl space-y-6">
-        <header className="space-y-1">
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-50">
-            Revok Pricing Demo
-          </h1>
-          <p className="text-sm text-slate-400">
-            Stale-memory detection in real time — Mem0 + Revok proxy + SQLite
-          </p>
-        </header>
+        {/* ── Header ──────────────────────────────────────────────── */}
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-50">
+              Revok Demo
+            </h1>
+            <p className="text-sm text-slate-400 mt-0.5">
+              Stale-memory detection · Mem0 · Revok proxy · LangGraph agents
+            </p>
+          </div>
+          <ConnectionStatus status={status} state={state} />
+        </div>
 
+        {/* ── Data / memory / answer ───────────────────────────── */}
         <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
           <ErrorBoundary label="Data Layer">
             <DataLayer state={state} />
@@ -40,21 +44,26 @@ export default function Page() {
           </ErrorBoundary>
         </div>
 
+        {/* ── Demo controls ───────────────────────────────────────── */}
         <ErrorBoundary label="Control Panel">
           <ControlPanel state={state} />
         </ErrorBoundary>
 
+        {/* ── Product catalog ─────────────────────────────────────── */}
         <ErrorBoundary label="Product Catalog">
           <ProductCatalog products={state?.products ?? []} />
         </ErrorBoundary>
 
+        {/* ── Revok Inspector ─────────────────────────────────────── */}
         <ErrorBoundary label="Revok Inspector">
           <RevokInspector state={state} />
         </ErrorBoundary>
 
+        {/* ── Event log ───────────────────────────────────────────── */}
         <ErrorBoundary label="Event Log">
           <EventLog entries={state?.event_log ?? []} />
         </ErrorBoundary>
+
       </div>
     </main>
   );
