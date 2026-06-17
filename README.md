@@ -1,11 +1,7 @@
-﻿<!-- LOGO PLACEHOLDER — replace src with your logo once uploaded (e.g. docs/assets/logo.png) -->
+﻿<!-- LOGO -->
 <div align="center">
-   <img src="https://raw.githubusercontent.com/robertopc1/revok/main/assets/logo-dark.png"
-       alt="Revok" width="300" #gh-dark-mode-only/>
-   <img src="https://raw.githubusercontent.com/robertopc1/revok/main/assets/logo-light.png"
-       alt="Revok" width="300" #gh-light-mode-only/>
-
-  <h1>Revok</h1>
+  <img src="https://raw.githubusercontent.com/revok-ai/revok/main/assets/logo-dark.png#gh-dark-mode-only" alt="Revok" width="300" />
+  <img src="https://raw.githubusercontent.com/revok-ai/revok/main/assets/logo-light.png#gh-light-mode-only" alt="Revok" width="300" />
 
   <p><strong>The memory validity layer for AI agents.</strong></p>
 
@@ -17,7 +13,7 @@
   <p>
     <a href="#license"><img alt="License: AGPL v3" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" /></a>
     <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" />
-    <img alt="Status" src="https://img.shields.io/badge/status-v0.1.1-orange.svg" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v0.2.0-orange.svg" />
     <img alt="Async" src="https://img.shields.io/badge/built%20with-asyncio-009688.svg" />
     <a href="#contributing"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" /></a>
   </p>
@@ -85,9 +81,9 @@ Revok sits between your agent and its memory store as a **transparent HTTP proxy
 It listens for real-world signals, resolves which memories are affected using a
 **causal graph**, and attaches a **confidence score** at retrieval time.
 
-> **Minimal integration required.** Point Revok in front of Mem0 and your existing
-> memory writes are enriched automatically. Confidence is retrieved with one
-> explicit call when your agent needs it.
+> **Minimal integration required.** Point Revok in front of Mem0 or Zep and your
+> existing memory writes are enriched automatically. Confidence is retrieved with
+> one explicit call when your agent needs it.
 
 ```python
 # Step 1 — your existing memory search, completely unchanged
@@ -95,10 +91,10 @@ memories = mem0.search(query, user_id=user_id)
 
 # Step 2 — get live confidence with one explicit call
 response = requests.get(
-    f"http://localhost:7771/v1/entities/{entity_key}"
+    f"http://localhost:8080/v1/entities/{entity_key}"
 )
-confidence = response.json()["score"]         # live, time-recovered
-status     = response.json()["confidence_status"] # fresh/degraded/stale
+confidence = response.json()["score"]              # live, time-recovered
+status     = response.json()["confidence_status"]  # fresh/degraded/stale
 
 # Step 3 — agent decides what to do
 if status == "fresh":
@@ -143,7 +139,7 @@ are complementary: keep your retrieval, add a validity layer underneath it.
 
 ## Features
 
-- 🔌 **Drop-in proxy** — sits in front of Mem0 over HTTP; memory writes enriched automatically.
+- 🔌 **Drop-in proxy** — sits in front of Mem0 or Zep over HTTP; memory writes enriched automatically.
 - 🧠 **Live confidence on demand** — `GET /v1/entities/{key}` returns a time-recovered score, never a frozen snapshot.
 - 🌐 **World-aware** — ingests external signals (CDC, webhooks, streams) that invalidate beliefs.
 - 🕸️ **Causal graph** — one signal can degrade every downstream memory it affects (NetworkX BFS).
@@ -159,19 +155,25 @@ are complementary: keep your retrieval, add a validity layer underneath it.
 ### Prerequisites
 
 - Python **3.11+**
-- A running [Mem0](https://mem0.ai) instance (or use the Docker demos below)
+- A running [Mem0](https://mem0.ai) or [Zep](https://www.getzep.com) instance (or use the Docker demos below)
 
 ### Install
 
 ```bash
 # Clone
-git clone https://github.com/robertopc1/revok.git
+git clone https://github.com/revok-ai/revok.git
 cd revok
 
 # Create a virtual environment and install
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
+```
+
+Or install the published package:
+
+```bash
+pip install revok
 ```
 
 ### Configure
@@ -189,16 +191,16 @@ revok --config revok.yaml
 # → Revok listening on http://127.0.0.1:8080
 ```
 
-Point your agent's Mem0 client at the Revok URL instead of Mem0 directly. That's it.
+Point your agent's memory client at the Revok URL instead of the store directly. That's it.
 
 ### Or run with Docker
 
 ```bash
-docker pull robertopc2/revok:latest
+docker pull ghcr.io/revok-ai/revok:latest
 
 docker run -v ./revok.yaml:/config/revok.yaml \
-  -p 7771:7771 \
-  robertopc2/revok:latest
+  -p 8080:8080 \
+  ghcr.io/revok-ai/revok:latest
 ```
 
 ---
@@ -209,12 +211,12 @@ Revok uses three separate paths that never block each other:
 
 **Write path — Revok intercepts:**
 ```
-Agent writes memory → Revok proxy → extracts entities → scores updated → forwarded to Mem0
+Agent writes memory → Revok proxy → extracts entities → scores updated → forwarded to store
 ```
 
 **Read path — Revok not involved:**
 ```
-Agent reads memory → directly to Mem0 → returned unchanged
+Agent reads memory → directly to store → returned unchanged
 ```
 Reads bypass Revok entirely. Zero added read latency.
 
@@ -254,7 +256,7 @@ are still true*. Use both.
 When something changes in the real world, send a signal to the dedicated endpoint:
 
 ```bash
-curl -X POST http://localhost:7771/signals \
+curl -X POST http://localhost:8080/signals \
   -H "Content-Type: application/json" \
   -d '{
     "entity_refs": ["redis-enterprise-pricing"],
@@ -286,7 +288,7 @@ flowchart TD
     E -->|exponential decay × pressure| F[State store]
 
     G[Agent memory write] --> H[Revok proxy]
-    H -->|enrich| I[Mem0]
+    H -->|enrich| I[Memory store]
 
     J[Agent memory read] -->|bypasses Revok| I
 
@@ -355,8 +357,8 @@ large catalogs.
 
 ## HTTP API
 
-Revok forwards everything to Mem0 transparently, and adds a small read-only API
-for inspecting confidence state:
+Revok forwards everything to your memory store transparently, and adds a small
+read-only API for inspecting confidence state:
 
 | Method   | Path                          | Description                          |
 |----------|-------------------------------|--------------------------------------|
@@ -364,7 +366,7 @@ for inspecting confidence state:
 | `GET`    | `/v1/entities`                | Paginated list of all entity records |
 | `GET`    | `/v1/entities/{entity_key}`   | Live time-recovered confidence score |
 | `DELETE` | `/v1/entities/{entity_key}`   | Remove an entity record              |
-| `*`      | `/{any other path}`           | Transparently proxied to Mem0        |
+| `*`      | `/{any other path}`           | Transparently proxied to the store   |
 
 To attach a signal to a write, send the entity with the request header:
 
@@ -403,11 +405,11 @@ its own README.
 
 **Memory adapters**
 
-| Adapter   | Status      |
-|-----------|-------------|
-| Mem0      | ✅ v0.1.0   |
-| Zep       | 🔜 v0.2.0   |
-|Agent Memory Server | 🔜 v0.3.0   |
+| Adapter             | Status      |
+|---------------------|-------------|
+| Mem0                | ✅ v0.1.0   |
+| Zep                 | ✅ v0.2.0   |
+| Agent Memory Server | 🔜 v0.3.0   |
 
 **Signal sources**
 
@@ -441,7 +443,7 @@ Please open an issue to discuss substantial changes before sending a PR.
 
 ## License
 
-[AGPL v3](LICENSE). Enterprise licensing available — contact **[robertopc@gmail.com]**.
+[AGPL v3](LICENSE). Enterprise licensing available — contact **hello@revok.ai**.
 
 ---
 
@@ -452,4 +454,4 @@ Core mechanisms are patent pending.
 
 ## Status
 
-`v0.1.1` — MVP. Mem0 adapter. Production use at your own risk. Feedback welcome.
+`v0.2.0` — Mem0 + Zep adapters. Production use at your own risk. Feedback welcome.
