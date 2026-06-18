@@ -14,6 +14,7 @@
     <a href="#license"><img alt="License: AGPL v3" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" /></a>
     <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" />
     <img alt="Status" src="https://img.shields.io/badge/status-v0.2.0-orange.svg" />
+    <img alt="Patent Pending" src="https://img.shields.io/badge/Patent-Pending-orange" />
     <img alt="Async" src="https://img.shields.io/badge/built%20with-asyncio-009688.svg" />
     <a href="#contributing"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" /></a>
   </p>
