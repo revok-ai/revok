@@ -12,6 +12,8 @@ upstream:
     - "PATCH"
   write_paths:
     - "/v1/long-term-memory"
+  read_subpaths:
+    - "search"
 
 # ---------------------------------------------------------------------------
 # entity_matcher (alias catalog — optional when callers send X-Revok-Entity)
