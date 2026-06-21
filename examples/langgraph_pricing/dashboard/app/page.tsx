@@ -1,14 +1,12 @@
 "use client";
 
 import { AgentAnswer } from "@/components/AgentAnswer";
-import { AgentMemory } from "@/components/AgentMemory";
 import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { ControlPanel } from "@/components/ControlPanel";
-import { DataLayer } from "@/components/DataLayer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EventLog } from "@/components/EventLog";
-import { ProductCatalog } from "@/components/ProductCatalog";
 import { RevokInspector } from "@/components/RevokInspector";
+import { StatusStrip } from "@/components/StatusStrip";
 import { useSSE } from "@/hooks/useSSE";
 
 export default function Page() {
@@ -31,27 +29,19 @@ export default function Page() {
           <ConnectionStatus status={status} state={state} />
         </div>
 
-        {/* ── Data / memory / answer ───────────────────────────── */}
-        <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
-          <ErrorBoundary label="Data Layer">
-            <DataLayer state={state} />
-          </ErrorBoundary>
-          <ErrorBoundary label="Agent Memory">
-            <AgentMemory state={state} />
-          </ErrorBoundary>
-          <ErrorBoundary label="Agent Answer">
-            <AgentAnswer state={state} />
-          </ErrorBoundary>
-        </div>
+        {/* ── Live status strip ───────────────────────────────────── */}
+        <ErrorBoundary label="Status">
+          <StatusStrip state={state} />
+        </ErrorBoundary>
 
         {/* ── Demo controls ───────────────────────────────────────── */}
         <ErrorBoundary label="Control Panel">
           <ControlPanel state={state} />
         </ErrorBoundary>
 
-        {/* ── Product catalog ─────────────────────────────────────── */}
-        <ErrorBoundary label="Product Catalog">
-          <ProductCatalog products={state?.products ?? []} />
+        {/* ── Agent answers ──────────────────────────────────────── */}
+        <ErrorBoundary label="Agent Answer">
+          <AgentAnswer state={state} />
         </ErrorBoundary>
 
         {/* ── Revok Inspector ─────────────────────────────────────── */}
