@@ -7,6 +7,25 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.0] — 2026-06-21
+
+### Added
+- Signal-driven causal propagation worker (`revok/signal_processor.py`) with async consumer loop, bounded processing timeout, and error-isolation semantics.
+- `GraphBackend` protocol and concrete weighted propagation in `revok/causal_graph.py`.
+- Bounded BFS causal propagation with cycle safety, max-pressure aggregation, hop-limit cutoff, and min-pressure pruning.
+- New config sections for causal propagation and severity mapping:
+  - `causal_graph` (`enabled`, `max_hops`, `min_pressure`, `attenuation`, `processing_timeout_seconds`, `relationships`)
+  - `scoring.signal_pressure` (`severity_weights`, `default_severity`)
+- Proxy lifecycle integration: consumer starts on app startup and is cancelled on cleanup.
+- Expanded test coverage for causal propagation, signal processing, proxy lifecycle, and config/scoring validation.
+
+### Changed
+- `POST /signals` is now consumed by a background processor that updates root entities and optional downstream causal relationships.
+- `CausalGraph.add_relation()` now accepts weighted edges (`weight` in `(0,1]`).
+- Example configs updated to include causal graph and signal pressure mapping blocks.
+
+---
+
 ## [0.2.0] — 2026-06-11
 
 ### Added
@@ -170,4 +189,6 @@ scaffold, and the Mem0 memory adapter.
 
 ---
 
+[0.3.0]: https://github.com/robertopc1/revok/releases/tag/v0.3.0
+[0.2.0]: https://github.com/robertopc1/revok/releases/tag/v0.2.0
 [0.1.0]: https://github.com/robertopc1/revok/releases/tag/v0.1.0

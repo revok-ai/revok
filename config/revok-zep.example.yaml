@@ -55,6 +55,26 @@ scoring:
   # on top of the normal signal_strength deduction. Default: 0.15.
   contradiction_penalty: 0.15
 
+  # Signal-pressure mapping used by /signals processing.
+  signal_pressure:
+    severity_weights:
+      low: 0.2
+      medium: 0.4
+      high: 0.7
+      critical: 1.0
+    default_severity: medium
+
+causal_graph:
+  enabled: true
+  max_hops: 2
+  min_pressure: 0.05
+  attenuation: 0.8
+  processing_timeout_seconds: 2.0
+  relationships:
+    - source: "alice"
+      target: "bob"
+      weight: 0.5
+
 state_store:
   sqlite_path: "./revok_zep_state.db"
   hot_layer_max_entries: 1000

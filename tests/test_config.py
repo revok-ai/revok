@@ -442,3 +442,94 @@ class TestFuzzyMatchThresholdConfig:
         yaml = VALID_YAML.replace('  write_paths: ["/v1/memories"]\n', "")
         with pytest.raises(ConfigError, match="write_paths"):
             load_config(_write_yaml(tmp_path, yaml))
+
+
+class TestCausalGraphConfig:
+    def test_causal_graph_defaults(self, tmp_path: Path) -> None:
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.causal_graph.enabled is False
+        assert cfg.causal_graph.max_hops == 2
+        assert cfg.causal_graph.min_pressure == 0.05
+        assert cfg.causal_graph.attenuation == 0.8
+        assert cfg.causal_graph.processing_timeout_seconds == 2.0
+        assert cfg.causal_graph.relationships == []
+
+    def test_causal_graph_relationships_loaded(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ncausal_graph:\n"
+            + "  enabled: true\n"
+            + "  max_hops: 3\n"
+            + "  min_pressure: 0.1\n"
+            + "  attenuation: 0.7\n"
+            + "  processing_timeout_seconds: 1.5\n"
+            + "  relationships:\n"
+            + "    - source: a\n"
+            + "      target: b\n"
+            + "      weight: 0.6\n"
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.causal_graph.enabled is True
+        assert len(cfg.causal_graph.relationships) == 1
+        rel = cfg.causal_graph.relationships[0]
+        assert rel.source == "a"
+        assert rel.target == "b"
+        assert rel.weight == 0.6
+
+    def test_causal_graph_invalid_weight_raises(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ncausal_graph:\n"
+            + "  relationships:\n"
+            + "    - source: a\n"
+            + "      target: b\n"
+            + "      weight: 1.5\n"
+        )
+        with pytest.raises(ConfigError, match="weight"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+
+class TestSignalPressureConfig:
+    def test_signal_pressure_defaults(self, tmp_path: Path) -> None:
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.scoring.signal_pressure is not None
+        assert cfg.scoring.signal_pressure.default_severity == "medium"
+
+    def test_signal_pressure_loaded(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML.replace(
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0",
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0\n"
+            "  signal_pressure:\n"
+            "    severity_weights:\n"
+            "      low: 0.2\n"
+            "      medium: 0.4\n"
+            "    default_severity: medium",
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.scoring.signal_pressure is not None
+        assert cfg.scoring.signal_pressure.severity_weights["low"] == 0.2
+        assert cfg.scoring.signal_pressure.default_severity == "medium"
+
+    def test_signal_pressure_out_of_range_weight_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML.replace(
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0",
+            "scoring:\n"
+            "  half_life_seconds: 86400\n"
+            "  signal_strength: 0.3\n"
+            "  score_cap: 1.0\n"
+            "  signal_pressure:\n"
+            "    severity_weights:\n"
+            "      medium: 2.0\n"
+            "    default_severity: medium",
+        )
+        with pytest.raises(ConfigError, match="severity_weights"):
+            load_config(_write_yaml(tmp_path, yaml))

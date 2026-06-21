@@ -20,3 +20,6 @@ tests/
 *.md
 .gitignore
 TASKS.md
+.env*
+*.log*
+coverage/

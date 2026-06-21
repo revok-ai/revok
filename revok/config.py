@@ -147,6 +147,63 @@ class ScoringConfig:
     score_cap: float
     contradiction_window_seconds: float = 300.0
     contradiction_penalty: float = 0.15
+    signal_pressure: "SignalPressureConfig" | None = None
+
+
+@dataclass(frozen=True)
+class SignalPressureConfig:
+    """Severity-to-pressure mapping and fallback defaults.
+
+    Attributes:
+        severity_weights: Mapping from severity label to pressure multiplier in [0, 1].
+        default_severity: Severity label used when a signal omits or uses unknown severity.
+    """
+
+    severity_weights: dict[str, float] = field(default_factory=dict)
+    default_severity: str = "medium"
+
+    def resolve(self, severity: str | None) -> float:
+        """Resolve a severity label to a pressure value.
+
+        Unknown or empty severities fall back to ``default_severity`` and then to 0.3.
+        """
+        key = (severity or "").strip().lower()
+        if key and key in self.severity_weights:
+            return self.severity_weights[key]
+        default_key = self.default_severity.strip().lower()
+        if default_key in self.severity_weights:
+            return self.severity_weights[default_key]
+        return 0.3
+
+
+@dataclass(frozen=True)
+class CausalGraphConfig:
+    """Causal propagation controls.
+
+    Attributes:
+        enabled: Enables async signal-driven propagation.
+        max_hops: Maximum BFS depth from root entities.
+        min_pressure: Minimum pressure retained during propagation.
+        attenuation: Per-hop attenuation multiplier.
+        processing_timeout_seconds: Bounded processing timeout for one signal batch.
+        relationships: Directed weighted edges loaded at startup.
+    """
+
+    enabled: bool = False
+    max_hops: int = 2
+    min_pressure: float = 0.05
+    attenuation: float = 0.8
+    processing_timeout_seconds: float = 2.0
+    relationships: list["CausalRelationshipConfig"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CausalRelationshipConfig:
+    """Directed weighted relation between two entity keys."""
+
+    source: str
+    target: str
+    weight: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -195,6 +252,7 @@ class Config:
     state_store: StateStoreConfig
     logging: LoggingConfig
     adapter_type: str = "mem0"
+    causal_graph: CausalGraphConfig = field(default_factory=CausalGraphConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -416,12 +474,93 @@ def load_config(path: str) -> Config:
     contradiction_window = sc.get("contradiction_window_seconds", 300.0)
     contradiction_penalty_val = sc.get("contradiction_penalty", 0.15)
 
+    signal_pressure_raw = sc.get("signal_pressure") or {}
+    if not isinstance(signal_pressure_raw, dict):
+        raise ConfigError("scoring.signal_pressure must be a mapping when provided.")
+    severity_weights_raw = signal_pressure_raw.get("severity_weights") or {}
+    if not isinstance(severity_weights_raw, dict):
+        raise ConfigError("scoring.signal_pressure.severity_weights must be a mapping.")
+    severity_weights: dict[str, float] = {}
+    for k, v in severity_weights_raw.items():
+        key = str(k).strip().lower()
+        if not key:
+            raise ConfigError("scoring.signal_pressure.severity_weights keys must be non-empty.")
+        if not isinstance(v, (int, float)) or float(v) < 0.0 or float(v) > 1.0:
+            raise ConfigError(
+                "scoring.signal_pressure.severity_weights values must be numbers in [0, 1]."
+            )
+        severity_weights[key] = float(v)
+    default_severity = str(signal_pressure_raw.get("default_severity") or "medium").strip().lower()
+    if not default_severity:
+        raise ConfigError("scoring.signal_pressure.default_severity must be non-empty.")
+
+    signal_pressure_cfg = SignalPressureConfig(
+        severity_weights=severity_weights,
+        default_severity=default_severity,
+    )
+
     scoring_cfg = ScoringConfig(
         half_life_seconds=float(half_life),
         signal_strength=float(signal_strength),
         score_cap=float(score_cap),
         contradiction_window_seconds=float(contradiction_window),
         contradiction_penalty=float(contradiction_penalty_val),
+        signal_pressure=signal_pressure_cfg,
+    )
+
+    # --- causal_graph (optional) ---
+    cg_raw = data.get("causal_graph") or {}
+    if not isinstance(cg_raw, dict):
+        raise ConfigError("causal_graph must be a mapping when provided.")
+
+    cg_enabled = bool(cg_raw.get("enabled", False))
+    cg_max_hops = cg_raw.get("max_hops", 2)
+    cg_min_pressure = cg_raw.get("min_pressure", 0.05)
+    cg_attenuation = cg_raw.get("attenuation", 0.8)
+    cg_timeout = cg_raw.get("processing_timeout_seconds", 2.0)
+
+    if not isinstance(cg_max_hops, int) or cg_max_hops < 0:
+        raise ConfigError("causal_graph.max_hops must be an integer >= 0.")
+    if not isinstance(cg_min_pressure, (int, float)) or not (0.0 <= float(cg_min_pressure) <= 1.0):
+        raise ConfigError("causal_graph.min_pressure must be in [0, 1].")
+    if not isinstance(cg_attenuation, (int, float)) or not (0.0 < float(cg_attenuation) <= 1.0):
+        raise ConfigError("causal_graph.attenuation must be in (0, 1].")
+    if not isinstance(cg_timeout, (int, float)) or float(cg_timeout) <= 0.0:
+        raise ConfigError("causal_graph.processing_timeout_seconds must be > 0.")
+
+    relationships_raw = cg_raw.get("relationships") or []
+    if not isinstance(relationships_raw, list):
+        raise ConfigError("causal_graph.relationships must be a list.")
+    relationships: list[CausalRelationshipConfig] = []
+    for i, rel in enumerate(relationships_raw):
+        if not isinstance(rel, dict):
+            raise ConfigError(f"causal_graph.relationships[{i}] must be a mapping.")
+        source = rel.get("source")
+        target = rel.get("target")
+        if not source or not target:
+            raise ConfigError(
+                f"causal_graph.relationships[{i}] must include source and target."
+            )
+        weight = rel.get("weight", 1.0)
+        if not isinstance(weight, (int, float)) or float(weight) <= 0.0 or float(weight) > 1.0:
+            raise ConfigError(
+                f"causal_graph.relationships[{i}].weight must be in (0, 1]."
+            )
+        relationships.append(
+            CausalRelationshipConfig(
+                source=str(source).strip().lower(),
+                target=str(target).strip().lower(),
+                weight=float(weight),
+            )
+        )
+
+    causal_graph_cfg = CausalGraphConfig(
+        enabled=cg_enabled,
+        max_hops=int(cg_max_hops),
+        min_pressure=float(cg_min_pressure),
+        attenuation=float(cg_attenuation),
+        processing_timeout_seconds=float(cg_timeout),
+        relationships=relationships,
     )
 
     # --- state_store ---
@@ -454,4 +593,5 @@ def load_config(path: str) -> Config:
         state_store=state_store_cfg,
         logging=logging_cfg,
         adapter_type=adapter_type,
+        causal_graph=causal_graph_cfg,
     )
