@@ -156,17 +156,43 @@ class Mem0Adapter:
             await self._session.close()
             self._closed = True
 
+    @staticmethod
+    def _normalize_path(value: str) -> str:
+        """Normalize configured/request paths for write-route comparison."""
+        if value == "/":
+            return "/"
+        return value.rstrip("/")
+
     @classmethod
     def is_write_request(cls, method: str, path: str, config: UpstreamConfig) -> bool:
         """Return True if this request should trigger the enrichment pipeline.
 
-        For Mem0 mode a request is a write when the HTTP method is in
-        ``config.write_methods`` *and* the path starts with one of
-        ``config.write_paths``.
+        A request is a write when **all** of the following hold:
+
+        1. The HTTP method is in ``config.write_methods``.
+        2. The path equals a configured write_path (trailing-slash-normalised),
+           or starts with ``write_path + "/"`` (boundary-aware prefix — allows
+           ``PUT /memories/{id}`` while rejecting ``/memories2``).
+        3. The segment immediately after the write_path boundary is not listed
+           in ``config.read_subpaths`` (opt-in exclusion, e.g. ``["search"]``).
         """
-        return method.upper() in {m.upper() for m in config.write_methods} and any(
-            path.startswith(p) for p in config.write_paths
-        )
+        if method.upper() not in {m.upper() for m in config.write_methods}:
+            return False
+
+        normalized_path = cls._normalize_path(path)
+        for configured in config.write_paths:
+            norm_configured = cls._normalize_path(configured)
+            if normalized_path == norm_configured:
+                return True
+            if normalized_path.startswith(norm_configured + "/"):
+                # Check opt-in read_subpath exclusions on the immediate
+                # segment after the write_path boundary (e.g. "/search").
+                remainder = normalized_path[len(norm_configured):]
+                for excluded in config.read_subpaths:
+                    if remainder == "/" + excluded.lstrip("/"):
+                        return False
+                return True
+        return False
 
     @classmethod
     def extract_signal_context(

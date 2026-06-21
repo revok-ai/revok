@@ -69,6 +69,7 @@ class UpstreamConfig:
     url: str
     write_methods: list[str]
     write_paths: list[str] = field(default_factory=list)
+    read_subpaths: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -379,10 +380,15 @@ def load_config(path: str) -> Config:
     if adapter_type == "mem0" and not write_paths_up:
         raise ConfigError("upstream.write_paths must be a non-empty list.")
 
+    read_subpaths_up = up_raw.get("read_subpaths") or []
+    if not isinstance(read_subpaths_up, list):
+        raise ConfigError("upstream.read_subpaths must be a list.")
+
     upstream_cfg = UpstreamConfig(
         url=str(up_url).rstrip("/"),
         write_methods=[str(m).upper() for m in write_methods_up],
         write_paths=[str(p) for p in write_paths_up],
+        read_subpaths=[str(p) for p in read_subpaths_up],
     )
 
     # --- entity_matcher (optional) ---
