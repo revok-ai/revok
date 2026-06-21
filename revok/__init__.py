@@ -18,7 +18,9 @@
 
 import logging
 
+from revok.interfaces import GraphBackend
+
 __version__ = "0.2.0"
-__all__ = ["__version__"]
+__all__ = ["__version__", "GraphBackend"]
 
 logger = logging.getLogger(__name__)

@@ -44,7 +44,7 @@ import logging
 import math
 import re
 
-from revok.config import ScoringConfig
+from revok.config import ScoringConfig, SignalPressureConfig
 from revok.models import EntityRecord
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ class ScoringEngine:
         self._lambda = math.log(2) / config.half_life_seconds
         self._contradiction_window_seconds = config.contradiction_window_seconds
         self._contradiction_penalty = config.contradiction_penalty
+        self._signal_pressure = config.signal_pressure or SignalPressureConfig()
 
     @staticmethod
     def extract_fingerprint(raw_content: str) -> str | None:
@@ -173,6 +174,36 @@ class ScoringEngine:
         if is_contradiction:
             score_new -= self._contradiction_penalty
         return max(0.0, score_new)
+
+    def score_with_pressure(
+        self,
+        existing: EntityRecord | None,
+        now: float,
+        pressure: float,
+        *,
+        is_contradiction: bool = False,
+    ) -> float:
+        """Compute score using a caller-supplied pressure value in [0, 1]."""
+        pressure = max(0.0, min(1.0, float(pressure)))
+        effective_strength = self._signal_strength * pressure
+
+        if existing is None:
+            base = max(0.0, self._score_cap - effective_strength)
+            if is_contradiction:
+                base = max(0.0, base - self._contradiction_penalty)
+            return base
+
+        delta_t = max(0.0, now - existing.valid_time)
+        gap = self._score_cap - existing.score
+        score_recovered = self._score_cap - gap * math.exp(-self._lambda * delta_t)
+        score_new = score_recovered - effective_strength
+        if is_contradiction:
+            score_new -= self._contradiction_penalty
+        return max(0.0, score_new)
+
+    def pressure_for_severity(self, severity: str | None) -> float:
+        """Map a severity label to configured pressure with fallback defaults."""
+        return self._signal_pressure.resolve(severity)
 
     def decay_at(self, record: EntityRecord, now: float) -> float:
         """Return the current recovered confidence without applying a new signal.

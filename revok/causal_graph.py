@@ -14,12 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-"""Causal graph scaffold backed by NetworkX (Constitution § V — scaffold only).
-
-In Revok 0.1.0 this module **only** maintains the directed entity graph.
-No traversal, inference, or graph query operations are implemented in this
-version — those are deferred to a future release.
-"""
+"""Causal graph backed by NetworkX for weighted causal propagation."""
 
 from __future__ import annotations
 
@@ -27,18 +22,19 @@ import logging
 
 import networkx as nx  # type: ignore[import-untyped]
 
+from revok.interfaces import GraphBackend
+
 logger = logging.getLogger(__name__)
 
 
-class CausalGraph:
-    """A directed graph of entity relationships, backed by ``nx.DiGraph``.
+class CausalGraph(GraphBackend):
+    """A directed weighted graph of entity relationships.
 
     Entities are nodes; relations are directed edges.  The ``score`` attribute
     on each node reflects the most recently observed relevance score for that
     entity.
 
-    This is a **scaffold** implementation (FR-014, Constitution § V).
-    Graph queries and traversal will be added in a future release.
+    Propagation uses bounded breadth-first traversal with per-edge attenuation.
     """
 
     def __init__(self) -> None:
@@ -60,7 +56,7 @@ class CausalGraph:
             self._graph.add_node(entity_id, score=score)
             logger.debug("Added entity node %r score=%.4f", entity_id, score)
 
-    def add_relation(self, source_id: str, target_id: str) -> None:
+    def add_relation(self, source_id: str, target_id: str, weight: float = 1.0) -> None:
         """Add a directed edge from *source_id* to *target_id*.
 
         Both nodes are created automatically if they do not yet exist
@@ -69,12 +65,70 @@ class CausalGraph:
         Args:
             source_id: The entity at the tail of the directed edge.
             target_id: The entity at the head of the directed edge.
+            weight: Propagation weight in ``(0, 1]``.
         """
+        if weight <= 0.0 or weight > 1.0:
+            raise ValueError(f"relation weight must be in (0, 1], got {weight!r}")
         for node_id in (source_id, target_id):
             if not self._graph.has_node(node_id):
                 self._graph.add_node(node_id, score=0.0)
-        self._graph.add_edge(source_id, target_id)
-        logger.debug("Added relation %r → %r", source_id, target_id)
+        self._graph.add_edge(source_id, target_id, weight=float(weight))
+        logger.debug("Added relation %r → %r (weight=%.4f)", source_id, target_id, weight)
+
+    def propagate(
+        self,
+        root_entity_id: str,
+        initial_pressure: float,
+        *,
+        max_hops: int,
+        min_pressure: float,
+        attenuation: float,
+    ) -> dict[str, float]:
+        """Propagate pressure with bounded BFS and max-pressure aggregation.
+
+        The returned mapping excludes the root entity.
+        """
+        if max_hops < 0:
+            raise ValueError("max_hops must be >= 0")
+        if min_pressure < 0.0 or min_pressure > 1.0:
+            raise ValueError("min_pressure must be in [0, 1]")
+        if attenuation <= 0.0 or attenuation > 1.0:
+            raise ValueError("attenuation must be in (0, 1]")
+        if initial_pressure <= 0.0:
+            return {}
+        if not self._graph.has_node(root_entity_id):
+            return {}
+
+        frontier: dict[str, float] = {root_entity_id: float(initial_pressure)}
+        seen: set[str] = {root_entity_id}
+        result: dict[str, float] = {}
+
+        for _hop in range(1, max_hops + 1):
+            next_frontier: dict[str, float] = {}
+            for source_id, source_pressure in frontier.items():
+                for target_id in self._graph.successors(source_id):
+                    if target_id in seen:
+                        continue
+                    edge_weight = float(self._graph[source_id][target_id].get("weight", 1.0))
+                    pressure = source_pressure * edge_weight * attenuation
+                    if pressure < min_pressure:
+                        continue
+                    current = next_frontier.get(target_id)
+                    if current is None or pressure > current:
+                        next_frontier[target_id] = pressure
+
+            if not next_frontier:
+                break
+
+            for entity_key, pressure in next_frontier.items():
+                prev = result.get(entity_key)
+                if prev is None or pressure > prev:
+                    result[entity_key] = pressure
+
+            seen.update(next_frontier.keys())
+            frontier = next_frontier
+
+        return result
 
     @property
     def node_count(self) -> int:

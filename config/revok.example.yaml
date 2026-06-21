@@ -80,6 +80,32 @@ scoring:
   # on top of the normal signal_strength deduction. Default: 0.15.
   contradiction_penalty: 0.15
 
+  # Signal-pressure mapping used by /signals processing.
+  signal_pressure:
+    severity_weights:
+      low: 0.2
+      medium: 0.4
+      high: 0.7
+      critical: 1.0
+    default_severity: medium
+
+causal_graph:
+  # Enable or disable downstream propagation from root entities.
+  enabled: true
+  # BFS max depth from each root entity.
+  max_hops: 2
+  # Stop branches once propagated pressure drops below this threshold.
+  min_pressure: 0.05
+  # Per-hop attenuation multiplier.
+  attenuation: 0.8
+  # Processing timeout for one consumed signal.
+  processing_timeout_seconds: 2.0
+  # Optional directed weighted relationships used for propagation.
+  relationships:
+    - source: "apex_hoodie"
+      target: "solar_backpack"
+      weight: 0.6
+
 state_store:
   # Path to the SQLite WAL database file.
   sqlite_path: "./revok_state.db"

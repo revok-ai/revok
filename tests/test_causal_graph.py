@@ -79,6 +79,11 @@ class TestAddRelation:
         # alice score must not be clobbered
         assert g._graph.nodes["alice"]["score"] == pytest.approx(0.8)
 
+    def test_relation_stores_weight(self):
+        g = CausalGraph()
+        g.add_relation("alice", "bob", weight=0.6)
+        assert g._graph["alice"]["bob"]["weight"] == pytest.approx(0.6)
+
 
 class TestCounts:
     def test_empty_graph_has_zero_nodes_and_edges(self):
@@ -103,3 +108,108 @@ class TestCounts:
         g.add_relation("a", "c")
         assert g.node_count == 3
         assert g.edge_count == 3
+
+
+class TestPropagate:
+    def test_linear_chain_pressure_attenuation(self):
+        g = CausalGraph()
+        g.add_relation("a", "b", weight=0.5)
+        g.add_relation("b", "c", weight=0.5)
+
+        out = g.propagate(
+            "a",
+            1.0,
+            max_hops=3,
+            min_pressure=0.0,
+            attenuation=1.0,
+        )
+        assert out["b"] == pytest.approx(0.5)
+        assert out["c"] == pytest.approx(0.25)
+
+    def test_diamond_topology_max_path_wins_not_sum(self):
+        g = CausalGraph()
+        g.add_relation("a", "b", weight=0.9)
+        g.add_relation("a", "c", weight=0.5)
+        g.add_relation("b", "d", weight=0.5)
+        g.add_relation("c", "d", weight=1.0)
+
+        out = g.propagate(
+            "a",
+            1.0,
+            max_hops=3,
+            min_pressure=0.0,
+            attenuation=1.0,
+        )
+        # d gets max(0.9*0.5, 0.5*1.0) = 0.5
+        assert out["d"] == pytest.approx(0.5)
+
+    def test_cyclic_graph_terminates(self):
+        g = CausalGraph()
+        g.add_relation("a", "b", weight=0.8)
+        g.add_relation("b", "c", weight=0.8)
+        g.add_relation("c", "a", weight=0.8)
+
+        out = g.propagate(
+            "a",
+            1.0,
+            max_hops=10,
+            min_pressure=0.0,
+            attenuation=1.0,
+        )
+        assert "a" not in out
+        assert out["b"] == pytest.approx(0.8)
+        assert out["c"] == pytest.approx(0.64)
+
+    def test_hop_limit_cutoff(self):
+        g = CausalGraph()
+        g.add_relation("a", "b", weight=1.0)
+        g.add_relation("b", "c", weight=1.0)
+        g.add_relation("c", "d", weight=1.0)
+
+        out = g.propagate(
+            "a",
+            1.0,
+            max_hops=2,
+            min_pressure=0.0,
+            attenuation=1.0,
+        )
+        assert "b" in out and "c" in out
+        assert "d" not in out
+
+    def test_min_pressure_cutoff(self):
+        g = CausalGraph()
+        g.add_relation("a", "b", weight=0.5)
+        g.add_relation("b", "c", weight=0.5)
+        out = g.propagate(
+            "a",
+            1.0,
+            max_hops=3,
+            min_pressure=0.3,
+            attenuation=1.0,
+        )
+        assert "b" in out
+        assert "c" not in out
+
+    def test_no_outgoing_edges_returns_empty(self):
+        g = CausalGraph()
+        g.add_entity("a", 1.0)
+        out = g.propagate(
+            "a",
+            1.0,
+            max_hops=2,
+            min_pressure=0.0,
+            attenuation=1.0,
+        )
+        assert out == {}
+
+    def test_unknown_root_returns_empty(self):
+        g = CausalGraph()
+        g.add_relation("a", "b", weight=1.0)
+        out = g.propagate(
+            "x",
+            1.0,
+            max_hops=2,
+            min_pressure=0.0,
+            attenuation=1.0,
+        )
+        assert out == {}
