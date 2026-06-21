@@ -24,22 +24,26 @@ the configured Mem0 upstream.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
 import time
+from typing import Any
 
 import aiohttp
 import aiohttp.hdrs
 import aiohttp.web
 
 from revok.adapters import AdapterClass, _REGISTRY, build_adapter
+from revok.causal_graph import CausalGraph
 from revok.config import Config
 from revok.entity_matcher import EntityMatcher
 from revok.interfaces import StateStore
 from revok.metadata_writer import enrich
 from revok.models import Signal
 from revok.scoring import ScoringEngine
+from revok.signal_processor import SignalProcessor
 from revok.signal_queue import AsyncioQueueBus
 
 logger = logging.getLogger(__name__)
@@ -56,6 +60,10 @@ _HOP_BY_HOP: frozenset[str] = frozenset(
         "transfer-encoding",
         "upgrade",
     }
+)
+
+SIGNAL_PROCESSOR_TASK_KEY: aiohttp.web.AppKey[asyncio.Task[Any] | None] = (
+    aiohttp.web.AppKey("signal_processor_task")
 )
 
 
@@ -99,6 +107,10 @@ def build_app(
     adapter_cls: AdapterClass = _REGISTRY[config.adapter_type]
 
     _bus = bus if bus is not None else AsyncioQueueBus()
+    graph = CausalGraph()
+    for rel in config.causal_graph.relationships:
+        graph.add_relation(rel.source, rel.target, rel.weight)
+    processor = SignalProcessor(_bus, store, scorer, graph, config.causal_graph)
 
     async def _handle_get_entity(
         request: aiohttp.web.Request,
@@ -286,6 +298,22 @@ def build_app(
         )
 
     app = aiohttp.web.Application()
+    app[SIGNAL_PROCESSOR_TASK_KEY] = None
+
+    async def _on_startup(_: aiohttp.web.Application) -> None:
+        app[SIGNAL_PROCESSOR_TASK_KEY] = asyncio.create_task(processor.run())
+
+    async def _on_cleanup(_: aiohttp.web.Application) -> None:
+        task = app.get(SIGNAL_PROCESSOR_TASK_KEY)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
     app.router.add_get("/v1/entities/{entity_key}", _handle_get_entity)
     app.router.add_delete("/v1/entities/{entity_key}", _handle_delete_entity)
     app.router.add_get("/v1/entities", _handle_list_entities)

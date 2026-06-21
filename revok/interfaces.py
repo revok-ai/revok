@@ -16,7 +16,7 @@
 
 """Protocol interfaces for all pluggable Revok components.
 
-All four Protocol classes MUST be defined here before any concrete
+All Protocol classes MUST be defined here before any concrete
 implementation is written (FR-002, Constitution § III — Interface First).
 No concrete classes are defined in this module.
 """
@@ -180,5 +180,45 @@ class MemoryAdapter(Protocol):
         """Release the underlying HTTP session.
 
         Must be idempotent.
+        """
+        ...
+
+
+@runtime_checkable
+class GraphBackend(Protocol):
+    """Graph backend for causal propagation over entity relationships."""
+
+    def add_entity(self, entity_id: str, score: float) -> None:
+        """Add or update an entity node.
+
+        Args:
+            entity_id: Normalized entity identifier.
+            score: Current score for that entity.
+        """
+        ...
+
+    def add_relation(self, source_id: str, target_id: str, weight: float = 1.0) -> None:
+        """Add a directed weighted relation edge.
+
+        Args:
+            source_id: Source entity key.
+            target_id: Target entity key.
+            weight: Edge propagation multiplier in (0, 1].
+        """
+        ...
+
+    def propagate(
+        self,
+        root_entity_id: str,
+        initial_pressure: float,
+        *,
+        max_hops: int,
+        min_pressure: float,
+        attenuation: float,
+    ) -> dict[str, float]:
+        """Propagate pressure from a root entity to downstream entities.
+
+        Returns:
+            Mapping of downstream entity key to propagated pressure.
         """
         ...

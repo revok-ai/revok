@@ -300,6 +300,14 @@ flowchart TD
 Three separate paths — signal ingestion, memory writes, and confidence reads — never
 block each other. Signal processing is async. Memory reads bypass Revok entirely.
 
+For bitemporal consistency, signal ingestion uses event-time semantics:
+- `valid_time` is taken from `signal.timestamp` when present.
+- If `signal.timestamp` is in the future, `valid_time` is clamped to wall-clock
+  processing time.
+- `transaction_time` is always wall-clock processing time (when Revok applies the signal).
+
+This matches the same bitemporal model used by the write-enrichment path.
+
 ---
 
 ## Architecture
@@ -318,8 +326,12 @@ Causal graph      ←  NetworkX BFS traversal
 Scoring engine    ←  exponential decay × signal pressure
       ↓
 State store       ←  SQLite WAL + in-memory hot layer
-      ↓
-Metadata writer   →  confidence score in memory metadata
+
+Memory write path (independent)
+Agent write → metadata writer enrich() → upstream store
+
+Confidence read path (independent)
+GET /v1/entities/{key} → state store (live decay)
 ```
 
 ---
@@ -334,7 +346,7 @@ server:
   port: 8080
 
 upstream:
-  mem0_url: "http://localhost:8000"
+  url: "http://localhost:8000"
   write_methods: ["POST", "PUT", "PATCH"]
   write_paths: ["/v1/memories"]
 
@@ -346,13 +358,38 @@ entity_matcher:
 
 scoring:
   half_life_seconds: 86400      # confidence recovers to 0.5 after 24h
-  signal_strength: 0.4          # how much each signal subtracts
+  signal_strength: 0.4          # base deduction multiplier
   score_cap: 1.0
+  signal_pressure:
+    severity_weights: {low: 0.2, medium: 0.4, high: 0.7, critical: 1.0}
+    default_severity: medium
+
+causal_graph:
+  enabled: true
+  max_hops: 2
+  min_pressure: 0.05
+  attenuation: 0.8
+  processing_timeout_seconds: 2.0
+  relationships:
+    - source: "apex_hoodie"
+      target: "solar_backpack"
+      weight: 0.6
 ```
 
 See [`config/revok.example.yaml`](config/revok.example.yaml) for the fully
 documented configuration, including pattern mode and header-tagged mode for
 large catalogs.
+
+### Causal Graph Operator Notes
+
+- `causal_graph.enabled`: turns downstream propagation on/off. Root entity updates still apply.
+- `causal_graph.relationships`: directed weighted edges (`source`, `target`, `weight` in `(0,1]`).
+- `causal_graph.max_hops`: BFS depth limit.
+- `causal_graph.min_pressure`: prune branches below this pressure.
+- `causal_graph.attenuation`: per-hop multiplier applied with edge weight.
+- `causal_graph.processing_timeout_seconds`: timeout per consumed `/signals` event.
+- `scoring.signal_pressure.severity_weights`: maps incoming `/signals` severity labels to pressure.
+- `scoring.signal_pressure.default_severity`: fallback when severity is missing/unknown.
 
 ---
 
