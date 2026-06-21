@@ -24,12 +24,15 @@ from revok.interfaces import MemoryAdapter
 
 
 def _upstream(
-    write_methods: list[str] | None = None, write_paths: list[str] | None = None
+    write_methods: list[str] | None = None,
+    write_paths: list[str] | None = None,
+    read_subpaths: list[str] | None = None,
 ) -> UpstreamConfig:
     return UpstreamConfig(
         url="http://localhost:8000",
         write_methods=write_methods or ["POST"],
         write_paths=write_paths or ["/v1/memories"],
+        read_subpaths=read_subpaths or [],
     )
 
 
@@ -84,7 +87,6 @@ def test_registry_contains_mem0_and_zep() -> None:
     "method,path,expected",
     [
         ("POST", "/v1/memories", True),
-        ("POST", "/v1/memories/extra", True),  # path prefix match
         ("post", "/v1/memories", True),  # method case-insensitive
         ("GET", "/v1/memories", False),  # wrong method
         ("POST", "/v1/other", False),  # wrong path
@@ -94,6 +96,86 @@ def test_registry_contains_mem0_and_zep() -> None:
 def test_mem0_is_write_request(method: str, path: str, expected: bool) -> None:
     config = _upstream(write_methods=["POST"], write_paths=["/v1/memories"])
     assert Mem0Adapter.is_write_request(method, path, config) is expected
+
+
+def test_write_path_exact_match_is_write() -> None:
+    config = _upstream(
+        write_methods=["POST"],
+        write_paths=["/v1/long-term-memory"],
+    )
+    assert Mem0Adapter.is_write_request("POST", "/v1/long-term-memory", config) is True
+
+
+def test_write_path_subpath_without_exclusion_config_is_write() -> None:
+    # Without read_subpaths configured, any boundary-prefix sub-path is a
+    # write. The exclusion is opt-in via config, not a hardcoded special case.
+    config = _upstream(
+        write_methods=["POST"],
+        write_paths=["/v1/long-term-memory"],
+    )
+    assert (
+        Mem0Adapter.is_write_request(
+            "POST",
+            "/v1/long-term-memory/search",
+            config,
+        )
+        is True
+    )
+
+
+def test_write_path_subpath_search_excluded_via_config() -> None:
+    # With read_subpaths=["search"], POST /v1/long-term-memory/search is
+    # classified as a read — the segment immediately after the write_path
+    # boundary matches an opt-in exclusion.
+    config = _upstream(
+        write_methods=["POST"],
+        write_paths=["/v1/long-term-memory"],
+        read_subpaths=["search"],
+    )
+    assert (
+        Mem0Adapter.is_write_request(
+            "POST",
+            "/v1/long-term-memory/search",
+            config,
+        )
+        is False
+    )
+
+
+def test_write_path_with_id_segment_is_still_a_write() -> None:
+    # Mem0 uses PUT /memories/{memory_id} to update a specific memory.
+    # A path with an ID segment under a configured write_path must still
+    # be classified as a write — exact-match must not overcorrect here.
+    config = _upstream(
+        write_methods=["PUT"],
+        write_paths=["/v1/long-term-memory"],
+    )
+    assert (
+        Mem0Adapter.is_write_request(
+            "PUT",
+            "/v1/long-term-memory/abc123",
+            config,
+        )
+        is True
+    )
+
+
+def test_write_path_unrelated_longer_segment_is_not_write() -> None:
+    config = _upstream(
+        write_methods=["POST"],
+        write_paths=["/memories"],
+    )
+    assert Mem0Adapter.is_write_request("POST", "/memories2", config) is False
+    assert Mem0Adapter.is_write_request("POST", "/memoriesfoo", config) is False
+
+
+def test_write_path_with_trailing_slash_in_config_still_works() -> None:
+    config = _upstream(
+        write_methods=["POST"],
+        write_paths=["/v1/memories/"],
+    )
+    assert Mem0Adapter.is_write_request("POST", "/v1/memories", config) is True
+    assert Mem0Adapter.is_write_request("POST", "/v1/memories/", config) is True
 
 
 # ---------------------------------------------------------------------------
