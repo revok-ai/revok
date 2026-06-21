@@ -33,7 +33,6 @@ MANIFEST
 *.spec
 
 # Spec Kit
-.specify/
 specs/
 
 # Installer logs
