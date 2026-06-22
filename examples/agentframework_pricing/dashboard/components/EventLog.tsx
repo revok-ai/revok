@@ -9,7 +9,7 @@ interface EventLogProps {
 
 const KIND_COLOR: Record<EventKind, string> = {
   memory: "#3b82f6",
-  database: "#f59e0b",
+  billing: "#f59e0b",
   signal: "#ef4444",
   agent: "#22c55e",
   info: "#64748b",

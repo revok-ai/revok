@@ -1,7 +1,8 @@
-"""SQLite product pricing database for the crewai_pricing demo.
+"""SQLite subscription state database for the agentframework_pricing demo.
 
-All table/column names and seed values come from environment variables.
-No hardcoded business data.
+Stores the current subscription profile for one customer account.
+All column names and seed values are configurable via environment variables.
+No hardcoded business data outside the seed defaults.
 """
 
 from __future__ import annotations
@@ -19,24 +20,35 @@ _log = logging.getLogger(__name__)
 # Config (from environment — all overridable)
 # ---------------------------------------------------------------------------
 
-DB_PATH: str = os.getenv("DB_PATH", "pricing_demo.db")
-PRODUCT_NAME: str = os.getenv("DB_PRODUCT_NAME", "Orion Cache")
-SEED_PRICE: float = float(os.getenv("DB_SEED_PRICE", "500"))
+DB_PATH: str = os.getenv("DB_PATH", "subscription_demo.db")
+CUSTOMER_ID: str = os.getenv("DB_CUSTOMER_ID", "acme-corp")
 
-# Multi-product catalog seeded at startup (INSERT OR IGNORE).
-# The primary product (PRODUCT_NAME / SEED_PRICE) is always first.
-SEED_PRODUCTS: list[tuple[str, float]] = [
-    (PRODUCT_NAME, SEED_PRICE),
-    ("Nova Gateway", 299.0),
-    ("Atlas Search", 199.0),
-    ("Titan Queue", 149.0),
-    ("Spark Store", 99.0),
-]
+# Enterprise tier seed values (initial state)
+SEED_TIER: str = os.getenv("DB_SEED_TIER", "Enterprise")
+SEED_SEATS: int = int(os.getenv("DB_SEED_SEATS", "50"))
+SEED_FEATURES: str = os.getenv(
+    "DB_SEED_FEATURES",
+    "Advanced Analytics, SSO, Priority API Access, Custom Integrations",
+)
+SEED_API_RATE: str = os.getenv("DB_SEED_API_RATE", "1,000,000 requests/month")
+SEED_BILLING: str = os.getenv(
+    "DB_SEED_BILLING", "Annual contract, locked rate through 2027-06-01"
+)
 
-TABLE: str = "products"
-COL_ID: str = "id"
-COL_NAME: str = "name"
-COL_PRICE: str = "price"
+# Starter tier downgrade values
+STARTER_TIER: str = os.getenv("DB_STARTER_TIER", "Starter")
+STARTER_SEATS: int = int(os.getenv("DB_STARTER_SEATS", "5"))
+STARTER_FEATURES: str = os.getenv("DB_STARTER_FEATURES", "Basic Analytics only")
+STARTER_API_RATE: str = os.getenv("DB_STARTER_API_RATE", "10,000 requests/month")
+STARTER_BILLING: str = os.getenv("DB_STARTER_BILLING", "Month-to-month, standard rate")
+
+TABLE: str = "subscription_state"
+COL_CUSTOMER_ID: str = "customer_id"
+COL_TIER: str = "subscription_tier"
+COL_SEATS: str = "seat_limit"
+COL_FEATURES: str = "feature_entitlements"
+COL_API_RATE: str = "api_rate_limit"
+COL_BILLING: str = "billing_terms"
 COL_UPDATED: str = "updated_at"
 
 
@@ -46,124 +58,152 @@ COL_UPDATED: str = "updated_at"
 
 
 async def init_db() -> None:
-    """Create the products table and seed all catalog rows if absent."""
+    """Create the subscription_state table and seed the customer row if absent."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE} (
-                {COL_ID}      INTEGER PRIMARY KEY AUTOINCREMENT,
-                {COL_NAME}    TEXT    UNIQUE NOT NULL,
-                {COL_PRICE}   REAL    NOT NULL,
-                {COL_UPDATED} TEXT    NOT NULL
+                {COL_CUSTOMER_ID}  TEXT PRIMARY KEY NOT NULL,
+                {COL_TIER}         TEXT NOT NULL,
+                {COL_SEATS}        INTEGER NOT NULL,
+                {COL_FEATURES}     TEXT NOT NULL,
+                {COL_API_RATE}     TEXT NOT NULL,
+                {COL_BILLING}      TEXT NOT NULL,
+                {COL_UPDATED}      TEXT NOT NULL
             )
             """
         )
         now = _now_iso()
-        for name, price in SEED_PRODUCTS:
-            await db.execute(
-                f"""
-                INSERT OR IGNORE INTO {TABLE} ({COL_NAME}, {COL_PRICE}, {COL_UPDATED})
-                VALUES (?, ?, ?)
-                """,
-                (name, price, now),
-            )
+        await db.execute(
+            f"""
+            INSERT OR IGNORE INTO {TABLE}
+                ({COL_CUSTOMER_ID}, {COL_TIER}, {COL_SEATS}, {COL_FEATURES},
+                 {COL_API_RATE}, {COL_BILLING}, {COL_UPDATED})
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                CUSTOMER_ID,
+                SEED_TIER,
+                SEED_SEATS,
+                SEED_FEATURES,
+                SEED_API_RATE,
+                SEED_BILLING,
+                now,
+            ),
+        )
         await db.commit()
     _log.info(
-        "Database ready at %s  products=%d  primary=%r  seed_price=%.2f",
+        "Database ready at %s  customer=%r  tier=%r",
         DB_PATH,
-        len(SEED_PRODUCTS),
-        PRODUCT_NAME,
-        SEED_PRICE,
+        CUSTOMER_ID,
+        SEED_TIER,
     )
 
 
-async def get_price(product_name: str) -> dict[str, Any] | None:
-    """Return the current price record for *product_name*, or ``None`` if not found.
-
-    Args:
-        product_name: The exact product name as stored in the database.
+async def get_subscription() -> dict[str, Any] | None:
+    """Return the current subscription profile for the customer, or ``None`` if not found.
 
     Returns:
-        Dict with keys ``name``, ``price``, ``updated_at``, or ``None``.
+        Dict with keys ``customer_id``, ``subscription_tier``, ``seat_limit``,
+        ``feature_entitlements``, ``api_rate_limit``, ``billing_terms``,
+        ``updated_at``.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            f"SELECT {COL_NAME}, {COL_PRICE}, {COL_UPDATED}"
-            f"  FROM {TABLE}"
-            f" WHERE {COL_NAME} = ?",
-            (product_name,),
+            f"SELECT * FROM {TABLE} WHERE {COL_CUSTOMER_ID} = ?",
+            (CUSTOMER_ID,),
         ) as cur:
             row = await cur.fetchone()
     return dict(row) if row is not None else None
 
 
-async def update_price(product_name: str, new_price: float) -> dict[str, Any]:
-    """Update the price for *product_name* and return the updated record.
+async def downgrade_to_starter() -> dict[str, Any]:
+    """Downgrade the customer subscription to Starter tier.
 
-    Args:
-        product_name: The exact product name as stored in the database.
-        new_price:    New price value (must be positive).
-
-    Returns:
-        Dict with keys ``name``, ``price``, ``updated_at``.
-    """
-    now = _now_iso()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            f"UPDATE {TABLE} SET {COL_PRICE} = ?, {COL_UPDATED} = ? WHERE {COL_NAME} = ?",
-            (new_price, now, product_name),
-        )
-        await db.commit()
-    _log.info("Updated price for %r → %.2f", product_name, new_price)
-    return {COL_NAME: product_name, COL_PRICE: new_price, COL_UPDATED: now}
-
-
-async def upsert_product(product_name: str, price: float) -> dict[str, Any]:
-    """Insert a new product or update its price if it already exists.
-
-    Args:
-        product_name: Display name for the product.
-        price:        Starting / new price value.
+    Updates all five subscription fields atomically to Starter-tier values.
+    This simulates a billing system webhook that changes the customer's plan
+    without the agent being notified.
 
     Returns:
-        Dict with keys ``name``, ``price``, ``updated_at``.
+        Updated subscription record dict.
     """
     now = _now_iso()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             f"""
-            INSERT INTO {TABLE} ({COL_NAME}, {COL_PRICE}, {COL_UPDATED})
-            VALUES (?, ?, ?)
-            ON CONFLICT({COL_NAME}) DO UPDATE
-              SET {COL_PRICE}   = excluded.{COL_PRICE},
-                  {COL_UPDATED} = excluded.{COL_UPDATED}
+            UPDATE {TABLE}
+               SET {COL_TIER}     = ?,
+                   {COL_SEATS}    = ?,
+                   {COL_FEATURES} = ?,
+                   {COL_API_RATE} = ?,
+                   {COL_BILLING}  = ?,
+                   {COL_UPDATED}  = ?
+             WHERE {COL_CUSTOMER_ID} = ?
             """,
-            (product_name, price, now),
+            (
+                STARTER_TIER,
+                STARTER_SEATS,
+                STARTER_FEATURES,
+                STARTER_API_RATE,
+                STARTER_BILLING,
+                now,
+                CUSTOMER_ID,
+            ),
         )
         await db.commit()
-    _log.debug("Upserted product %r → %.2f", product_name, price)
-    return {COL_NAME: product_name, COL_PRICE: price, COL_UPDATED: now}
+    _log.info("Downgraded customer %r to Starter tier", CUSTOMER_ID)
+    return {
+        COL_CUSTOMER_ID: CUSTOMER_ID,
+        COL_TIER: STARTER_TIER,
+        COL_SEATS: STARTER_SEATS,
+        COL_FEATURES: STARTER_FEATURES,
+        COL_API_RATE: STARTER_API_RATE,
+        COL_BILLING: STARTER_BILLING,
+        COL_UPDATED: now,
+    }
 
 
-async def reset_to_seed() -> dict[str, Any]:
-    """Reset the configured product to its seed price.
+async def reset_to_enterprise() -> dict[str, Any]:
+    """Reset the customer subscription to Enterprise seed values.
 
     Returns:
-        Updated record dict.
+        Reset subscription record dict.
     """
-    return await update_price(PRODUCT_NAME, SEED_PRICE)
-
-
-async def list_products() -> list[dict[str, Any]]:
-    """Return all product records ordered by insertion id."""
+    now = _now_iso()
     async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            f"SELECT {COL_NAME}, {COL_PRICE}, {COL_UPDATED} FROM {TABLE} ORDER BY {COL_ID}"
-        ) as cur:
-            rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+        await db.execute(
+            f"""
+            UPDATE {TABLE}
+               SET {COL_TIER}     = ?,
+                   {COL_SEATS}    = ?,
+                   {COL_FEATURES} = ?,
+                   {COL_API_RATE} = ?,
+                   {COL_BILLING}  = ?,
+                   {COL_UPDATED}  = ?
+             WHERE {COL_CUSTOMER_ID} = ?
+            """,
+            (
+                SEED_TIER,
+                SEED_SEATS,
+                SEED_FEATURES,
+                SEED_API_RATE,
+                SEED_BILLING,
+                now,
+                CUSTOMER_ID,
+            ),
+        )
+        await db.commit()
+    _log.info("Reset customer %r to Enterprise tier", CUSTOMER_ID)
+    return {
+        COL_CUSTOMER_ID: CUSTOMER_ID,
+        COL_TIER: SEED_TIER,
+        COL_SEATS: SEED_SEATS,
+        COL_FEATURES: SEED_FEATURES,
+        COL_API_RATE: SEED_API_RATE,
+        COL_BILLING: SEED_BILLING,
+        COL_UPDATED: now,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -172,5 +212,4 @@ async def list_products() -> list[dict[str, Any]]:
 
 
 def _now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()

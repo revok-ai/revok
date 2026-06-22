@@ -37,34 +37,36 @@ const CONFIDENCE: Record<
   },
 };
 
-function extractMemoryPrice(memory: string | null): number | null {
+function extractMemoryTier(memory: string | null): string | null {
   if (!memory) return null;
-  const match = memory.match(/\$([0-9]+(?:\.[0-9]+)?)/);
-  return match ? Number.parseFloat(match[1]) : null;
+  const match = memory.match(/[Ss]ubscription tier[:\s]+(\w+)/);
+  return match ? match[1] : null;
 }
 
 export function StatusStrip({ state }: StatusStripProps) {
-  const dbPrice = state?.db_price ?? null;
-  const memoryPrice = extractMemoryPrice(state?.memory_content ?? null);
+  const dbTier = state?.db_subscription_tier ?? null;
+  const memoryTier = extractMemoryTier(state?.memory_content ?? null);
   const score = state?.confidence_score ?? null;
   const status: ConfidenceStatus = state?.confidence_status ?? "unknown";
   const signalCount = state?.signal_count ?? 0;
   const c = CONFIDENCE[status];
   const drift =
-    dbPrice !== null && memoryPrice !== null && dbPrice !== memoryPrice;
+    dbTier !== null &&
+    memoryTier !== null &&
+    dbTier.toLowerCase() !== memoryTier.toLowerCase();
 
   return (
     <div className="flex flex-wrap gap-3">
-      {/* ── DB price ─────────────────────────────────────────────── */}
+      {/* ── DB tier ──────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 rounded-lg border border-[#2a2d3a] bg-[#1a1d27] px-3 py-2 min-w-[140px]">
         <Database className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-        <span className="text-xs text-slate-500">DB price</span>
-        <span className="ml-auto text-sm font-semibold text-slate-100 tabular-nums">
-          {dbPrice !== null ? `$${dbPrice.toFixed(0)}/mo` : "—"}
+        <span className="text-xs text-slate-500">DB tier</span>
+        <span className="ml-auto text-sm font-semibold text-slate-100">
+          {dbTier ?? "—"}
         </span>
       </div>
 
-      {/* ── Memory price ─────────────────────────────────────────── */}
+      {/* ── Memory tier ──────────────────────────────────────────── */}
       <div
         className={`flex items-center gap-2 rounded-lg border px-3 py-2 min-w-[160px] ${
           drift
@@ -83,11 +85,11 @@ export function StatusStrip({ state }: StatusStripProps) {
           Memory says
         </span>
         <span
-          className={`ml-auto text-sm font-semibold tabular-nums ${
+          className={`ml-auto text-sm font-semibold ${
             drift ? "text-amber-200" : "text-slate-100"
           }`}
         >
-          {memoryPrice !== null ? `$${memoryPrice.toFixed(0)}/mo` : "—"}
+          {memoryTier ?? "—"}
         </span>
         {drift && (
           <span className="ml-1 rounded border border-amber-500/40 bg-amber-500/15 px-1 py-0.5 text-[9px] font-bold tracking-wider text-amber-300 uppercase">
@@ -123,3 +125,4 @@ export function StatusStrip({ state }: StatusStripProps) {
     </div>
   );
 }
+

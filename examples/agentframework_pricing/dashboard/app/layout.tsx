@@ -4,8 +4,8 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "Revok Pricing Demo",
-  description: "Real-time stale-memory detection dashboard",
+  title: "Revok Agent Framework Demo",
+  description: "Real-time stale-memory detection — Agent Framework + Revok proxy",
 };
 
 export default function RootLayout({

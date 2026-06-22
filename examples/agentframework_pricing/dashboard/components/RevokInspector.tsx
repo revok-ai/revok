@@ -150,7 +150,7 @@ function SignalFeed({ entries }: { entries: EventLogEntry[] }) {
   if (signals.length === 0) {
     return (
       <p className="text-xs text-slate-500 italic py-2">
-        No signals yet — trigger one with "Fire Signal" or "Signal Pressure"
+        No signals yet &mdash; trigger one with &ldquo;Fire Billing Signal&rdquo;
       </p>
     );
   }
@@ -175,14 +175,33 @@ function SignalFeed({ entries }: { entries: EventLogEntry[] }) {
 // ─── main component ──────────────────────────────────────────────────────────
 
 export function RevokInspector({ state }: RevokInspectorProps) {
-  const products = state?.products ?? [];
-  const trackedProducts = products.filter((p) => p.confidence_score != null);
+  const depScores = state?.dependent_scores ?? {};
   const allEntries = state?.event_log ?? [];
 
-  // Highlight: how many entities currently have degraded/stale status
-  const alertCount = trackedProducts.filter(
-    (p) => p.confidence_status === "stale" || p.confidence_status === "degraded",
-  ).length;
+  // Root entity (subscription-tier) is tracked when memory_content is set
+  const rootScore = state?.confidence_score ?? null;
+  const rootStatus = state?.confidence_status ?? "unknown";
+  const rootSignalCount = state?.signal_count ?? 0;
+
+  // Highlight: root or any dependent that is degraded/stale
+  const DEP_DISPLAY: [string, string][] = [
+    ["seat-limit", "Seat Limit"],
+    ["feature-entitlements", "Feature Entitlements"],
+    ["api-rate-limit", "API Rate Limit"],
+    ["billing-terms", "Billing Terms"],
+  ];
+
+  const alertCount =
+    (rootStatus === "stale" || rootStatus === "degraded" ? 1 : 0) +
+    DEP_DISPLAY.filter(([key]) => {
+      const s = depScores[key];
+      if (s === null || s === undefined) return false;
+      return s < 0.7; // degraded or stale
+    }).length;
+
+  const trackedCount =
+    (rootScore !== null ? 1 : 0) +
+    DEP_DISPLAY.filter(([key]) => depScores[key] !== undefined && depScores[key] !== null).length;
 
   return (
     <Card className="border-slate-700/50 bg-slate-900/60">
@@ -205,7 +224,7 @@ export function RevokInspector({ state }: RevokInspectorProps) {
               variant="outline"
               className="text-[10px] px-1.5 py-0 border-slate-600 text-slate-400"
             >
-              {trackedProducts.length} tracked
+              {trackedCount} tracked
             </Badge>
           </div>
         </div>
@@ -222,23 +241,41 @@ export function RevokInspector({ state }: RevokInspectorProps) {
             Tracked Entities
           </h3>
 
-          {trackedProducts.length === 0 ? (
+          {trackedCount === 0 ? (
             <p className="text-xs text-slate-500 italic py-2">
-              No entities tracked yet — load memory to start tracking
+              No entities tracked yet — load customer profile to start tracking
             </p>
           ) : (
             <div className="grid gap-2 sm:grid-cols-2">
-              {trackedProducts.map((p) => (
+              {/* Root entity */}
+              {rootScore !== null && (
                 <EntityCard
-                  key={p.entity_key}
-                  name={p.name}
-                  entityKey={p.entity_key}
-                  score={p.confidence_score}
-                  status={p.confidence_status}
-                  signalCount={p.signal_count}
-                  lastSignalAt={p.last_signal_at}
+                  name="Subscription Tier"
+                  entityKey="subscription-tier"
+                  score={rootScore}
+                  status={rootStatus}
+                  signalCount={rootSignalCount}
+                  lastSignalAt={null}
                 />
-              ))}
+              )}
+              {/* Dependent entities from BFS propagation */}
+              {DEP_DISPLAY.map(([key, label]) => {
+                const depScore = depScores[key] ?? null;
+                if (depScore === null) return null;
+                const depStatus =
+                  depScore >= 0.7 ? "fresh" : depScore >= 0.3 ? "degraded" : "stale";
+                return (
+                  <EntityCard
+                    key={key}
+                    name={label}
+                    entityKey={key}
+                    score={depScore}
+                    status={depStatus as import("@/types/state").ConfidenceStatus}
+                    signalCount={0}
+                    lastSignalAt={null}
+                  />
+                );
+              })}
             </div>
           )}
         </section>

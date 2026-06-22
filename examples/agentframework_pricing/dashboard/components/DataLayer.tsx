@@ -12,36 +12,39 @@ interface DataLayerProps {
   state: DemoState | null;
 }
 
-function extractMemoryPrice(memory: string | null): number | null {
+function extractMemoryTier(memory: string | null): string | null {
   if (!memory) return null;
-  const match = memory.match(/\$([0-9]+(?:\.[0-9]+)?)/);
-  return match ? Number.parseFloat(match[1]) : null;
+  const match = memory.match(/[Ss]ubscription tier[:\s]+(\w+)/);
+  return match ? match[1] : null;
 }
 
 export function DataLayer({ state }: DataLayerProps) {
-  const dbPrice = state?.db_price ?? null;
-  const product = state?.db_product ?? "—";
+  const dbTier = state?.db_subscription_tier ?? null;
+  const dbSeats = state?.db_seat_limit ?? null;
+  const dbFeatures = state?.db_feature_entitlements ?? null;
+  const dbApiRate = state?.db_api_rate_limit ?? null;
+  const dbBilling = state?.db_billing_terms ?? null;
   const updatedRel = useRelativeTime(state?.db_updated_at ?? null);
-  const memoryPrice = extractMemoryPrice(state?.memory_content ?? null);
+  const memoryTier = extractMemoryTier(state?.memory_content ?? null);
 
-  const inSync = memoryPrice !== null && dbPrice !== null && memoryPrice === dbPrice;
-  const drift = memoryPrice !== null && dbPrice !== null && memoryPrice !== dbPrice;
+  const inSync = memoryTier !== null && dbTier !== null && memoryTier.toLowerCase() === dbTier.toLowerCase();
+  const drift = memoryTier !== null && dbTier !== null && memoryTier.toLowerCase() !== dbTier.toLowerCase();
 
-  // Pulse on price change
+  // Pulse on tier change
   const [pulseKey, setPulseKey] = useState<number>(0);
-  const [lastPrice, setLastPrice] = useState<number | null>(dbPrice);
+  const [lastTier, setLastTier] = useState<string | null>(dbTier);
   useEffect(() => {
-    if (dbPrice !== null && lastPrice !== null && dbPrice !== lastPrice) {
+    if (dbTier !== null && lastTier !== null && dbTier !== lastTier) {
       setPulseKey((k) => k + 1);
     }
-    setLastPrice(dbPrice);
-  }, [dbPrice, lastPrice]);
+    setLastTier(dbTier);
+  }, [dbTier, lastTier]);
 
   return (
     <Card className="h-full">
-      <CardHeader>
+      <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
             <Database className="h-4 w-4 text-slate-400" />
             SQL Database
           </CardTitle>
@@ -52,7 +55,7 @@ export function DataLayer({ state }: DataLayerProps) {
           )}
           {drift && (
             <Badge variant="warning" className="bg-amber-500/20 text-amber-300">
-              Price Changed
+              Plan Changed
             </Badge>
           )}
           {inSync && (
@@ -62,20 +65,29 @@ export function DataLayer({ state }: DataLayerProps) {
           )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-2 pt-0">
         <div
           key={pulseKey}
-          className="text-4xl font-bold text-slate-50 tabular-nums animate-soft-pulse"
+          className="text-base font-bold text-slate-50 animate-soft-pulse"
         >
-          {dbPrice !== null ? `$${dbPrice.toFixed(0)}` : "—"}
-          <span className="text-base font-normal text-slate-400 ml-1">/ month</span>
+          {dbTier ?? "—"}
         </div>
-        <div className="text-sm text-slate-300 font-medium">{product}</div>
-        <div className="text-xs text-slate-500">
-          Current DB price · updated {updatedRel}
+        <div className="space-y-0.5 text-xs text-slate-300">
+          {dbSeats !== null && (
+            <div><span className="text-slate-500">Seats:</span> {dbSeats}</div>
+          )}
+          {dbFeatures && (
+            <div><span className="text-slate-500">Features:</span> {dbFeatures}</div>
+          )}
+          {dbApiRate && (
+            <div><span className="text-slate-500">API rate:</span> {dbApiRate}</div>
+          )}
+          {dbBilling && (
+            <div><span className="text-slate-500">Billing:</span> {dbBilling}</div>
+          )}
         </div>
-        <div className="pt-2 text-xs text-slate-500 italic">
-          Tracks the product in the active question. See the catalog below for all products.
+        <div className="text-[11px] text-slate-500 pt-0.5">
+          Current subscription record · updated {updatedRel}
         </div>
       </CardContent>
     </Card>

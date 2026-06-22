@@ -48,7 +48,6 @@ services:
     environment:
       AMS_URL: http://redis-ams:8000
       REVOK_URL: http://revok:7771
-      REVOK_ENTITY: ${REVOK_ENTITY:-orion_cache}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
       AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2025-04-01-preview}

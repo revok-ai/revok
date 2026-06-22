@@ -2,11 +2,12 @@
 
 import { ExternalLink } from "lucide-react";
 import { AgentComparison } from "@/components/AgentComparison";
+import { AgentMemory } from "@/components/AgentMemory";
 import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { ControlPanel } from "@/components/ControlPanel";
+import { DataLayer } from "@/components/DataLayer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EventLog } from "@/components/EventLog";
-import { RevokInspector } from "@/components/RevokInspector";
 import { StatusStrip } from "@/components/StatusStrip";
 import { useAgUiRun } from "@/hooks/useAgUiRun";
 import { useSSE } from "@/hooks/useSSE";
@@ -67,10 +68,15 @@ export default function Page() {
           <AgentComparison state={state} agUiState={agUiState} />
         </ErrorBoundary>
 
-        {/* ── Revok Inspector ─────────────────────────────────────── */}
-        <ErrorBoundary label="Revok Inspector">
-          <RevokInspector state={state} />
-        </ErrorBoundary>
+        {/* ── DB state + Agent memory ──────────────────────────────── */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ErrorBoundary label="Data Layer">
+            <DataLayer state={state} />
+          </ErrorBoundary>
+          <ErrorBoundary label="Agent Memory">
+            <AgentMemory state={state} />
+          </ErrorBoundary>
+        </div>
 
         {/* ── Event log ───────────────────────────────────────────── */}
         <ErrorBoundary label="Event Log">

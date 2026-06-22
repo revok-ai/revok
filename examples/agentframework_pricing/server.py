@@ -1,4 +1,4 @@
-"""FastAPI dashboard server for the AgentFramework + Redis AMS stale-memory pricing demo."""
+"""FastAPI dashboard server for the AgentFramework + Redis AMS entitlement cascade demo."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import threading
 import database as db_module
 import demo_state as state_module
 import agent as agent_module
-from agent import AgentFrameworkPricingSalesAgent, _score_to_status, build_agents
+from agent import AgentFrameworkCustomerSuccessAgent, _score_to_status, build_agents
 
 APP_DIR = Path(__file__).parent
 
@@ -37,23 +37,26 @@ logging.basicConfig(
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Product catalog — maps display name → Revok entity key.
-# Must stay in sync with the entities: section in revok.yaml.
+# Root entity key — the subscription tier drives BFS propagation to all
+# four dependent entities (seat-limit, feature-entitlements, api-rate-limit,
+# billing-terms).  Must match the entity id in revok.yaml.
 # ---------------------------------------------------------------------------
-PRODUCT_CATALOG: dict[str, str] = {
-    "Orion Cache": "orion_cache",
-    "Nova Gateway": "nova_gateway",
-    "Atlas Search": "atlas_search",
-    "Titan Queue": "titan_queue",
-    "Spark Store": "spark_store",
-}
+_ROOT_ENTITY_KEY: str = "subscription-tier"
+
+# Dependent entity keys in BFS propagation order (closest first)
+_DEPENDENT_ENTITY_KEYS: list[str] = [
+    "seat-limit",
+    "feature-entitlements",
+    "api-rate-limit",
+    "billing-terms",
+]
 
 # ---------------------------------------------------------------------------
 # Runtime globals (populated in lifespan)
 # ---------------------------------------------------------------------------
 
-_without_revok: AgentFrameworkPricingSalesAgent | None = None
-_with_revok: AgentFrameworkPricingSalesAgent | None = None
+_without_revok: AgentFrameworkCustomerSuccessAgent | None = None
+_with_revok: AgentFrameworkCustomerSuccessAgent | None = None
 _demo_state: dict[str, Any] = {}
 _entity_key: str = ""
 
@@ -77,8 +80,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     ams_url = os.getenv("AMS_URL", "http://localhost:8000")
     revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
-    _entity_key = os.getenv("REVOK_ENTITY", "orion_cache")
-
     # Populate agent module config before building agents
     agent_module._config.update({
         "ams_url": ams_url,
@@ -118,40 +119,30 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # permanently locked when the container restarts.
     _demo_state["memory_loading"] = False
 
-    # Sync live DB price into state
-    db_row = await db_module.get_price(db_module.PRODUCT_NAME)
-    if db_row:
-        _demo_state["db_price"] = db_row[db_module.COL_PRICE]
-        _demo_state["db_updated_at"] = db_row[db_module.COL_UPDATED]
+    # Sync live subscription state into demo state
+    sub = await db_module.get_subscription()
+    if sub:
+        _demo_state["db_subscription_tier"] = sub[db_module.COL_TIER]
+        _demo_state["db_seat_limit"] = sub[db_module.COL_SEATS]
+        _demo_state["db_feature_entitlements"] = sub[db_module.COL_FEATURES]
+        _demo_state["db_api_rate_limit"] = sub[db_module.COL_API_RATE]
+        _demo_state["db_billing_terms"] = sub[db_module.COL_BILLING]
+        _demo_state["db_updated_at"] = sub[db_module.COL_UPDATED]
 
     _log.info(
-        "Demo server ready.  entity_key=%r  product=%r",
-        _entity_key,
-        db_module.PRODUCT_NAME,
+        "Demo server ready.  root_entity=%r  customer=%r",
+        _ROOT_ENTITY_KEY,
+        db_module.CUSTOMER_ID,
     )
     yield
 
 
-app = FastAPI(title="Revok AgentFramework + Redis AMS Pricing Demo", lifespan=lifespan)
+app = FastAPI(title="Revok AgentFramework + Redis AMS Entitlement Demo", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _detect_product(text: str) -> tuple[str, str]:
-    """Return (product_name, entity_key) for the first known product in *text*.
-
-    Falls back to the primary product if none found.
-    """
-    lower = text.lower()
-    for name, key in PRODUCT_CATALOG.items():
-        if name.lower() in lower:
-            return name, key
-    return db_module.PRODUCT_NAME, PRODUCT_CATALOG.get(
-        db_module.PRODUCT_NAME, _entity_key
-    )
 
 
 async def _fetch_revok_entity(key: str | None = None) -> dict[str, Any] | None:
@@ -199,7 +190,12 @@ async def _purge_user_memories(
     each one individually.  Creates a fresh ClientSession per request to avoid
     ServerDisconnectedError from the AMS keep-alive behaviour.
     """
-    search_terms = ["Customer", "price", "approved", "budget"]
+    # These terms are guaranteed to match because "subscription" and "tier" are
+    # hardcoded literals in the memory write template:
+    #   server.py  _run_load_memory()       → "Customer subscription tier: {tier}. ..."
+    #   agent.py   store_corrected_memory() → same template
+    # If that template wording changes, update these search terms to match.
+    search_terms = ["subscription", "tier"]
     seen_ids: set[str] = set()
     try:
         for term in search_terms:
@@ -236,97 +232,6 @@ async def _purge_user_memories(
     return deleted
 
 
-async def _heal_pricing_memory(
-    user_id: str,
-    product_name: str,
-    live_price: float,
-) -> None:
-    """Heal a stale pricing memory in Redis AMS after re-verification.
-
-    Searches for entries about *product_name*, deletes stale ones, then
-    writes a fresh entry with the correct *live_price*.  Runs directly
-    against AMS (bypassing the Revok proxy) so there is no scoring overhead
-    that could confuse dedup.
-
-    Uses the same search→delete-by-ID approach as _purge_user_memories:
-    - keyword search with session_id filter (bulk search with query= is broken)
-    - single-ID deletes with a fresh ClientSession per request (bulk delete is broken)
-    """
-    ams_url = os.getenv("AMS_URL", "http://localhost:8000")
-    keyword = product_name.lower()
-    # Cast a wide net — same terms as _purge_user_memories, but only keep
-    # entries that actually mention this product.
-    search_terms = [product_name, "Customer", "price", "approved", "budget"]
-    seen_ids: set[str] = set()
-
-    # 1. Search for all pricing memories for this user, filter to this product
-    try:
-        for term in search_terms:
-            async with aiohttp.ClientSession() as s:
-                async with s.post(
-                    f"{ams_url}/v1/long-term-memory/search",
-                    json={
-                        "text": term,
-                        "search_mode": "keyword",
-                        "session_id": {"eq": user_id},
-                        "limit": 100,
-                    },
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    if resp.status >= 300:
-                        continue
-                    data = await resp.json()
-                    mems = (
-                        data
-                        if isinstance(data, list)
-                        else data.get("memories", data.get("results", []))
-                    )
-                    for m in mems:
-                        text = (
-                            m.get("text") or m.get("memory") or m.get("content") or ""
-                        ).lower()
-                        if keyword in text and m.get("id"):
-                            seen_ids.add(m["id"])
-    except Exception as exc:
-        _log.warning("_heal_pricing_memory: search failed for %s: %s", user_id, exc)
-        return
-
-    # 2. Delete each stale memory individually (bulk delete is broken in AMS)
-    deleted = 0
-    for mem_id in seen_ids:
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.delete(
-                    f"{ams_url}/v1/long-term-memory",
-                    params=[("memory_ids", mem_id)],
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    if resp.status < 300:
-                        deleted += 1
-        except Exception:
-            pass
-
-    if seen_ids:
-        # Give AMS a moment to propagate the deletes before writing the new entry
-        await asyncio.sleep(1.0)
-
-    # 3. Write fresh corrected memory directly to AMS (no Revok proxy)
-    content = (
-        f"Customer budget approved {product_name} at ${live_price:.0f}/month. "
-        "Verified pricing from database."
-    )
-    async with aiohttp.ClientSession() as s:
-        await _store_directly_to_ams(s, ams_url, user_id, content)
-    _log.info(
-        "_heal_pricing_memory: replaced %d/%d memories for %s/%s @ $%.0f",
-        deleted,
-        len(seen_ids),
-        user_id,
-        product_name,
-        live_price,
-    )
-
-
 async def _store_directly_to_ams(
     session: aiohttp.ClientSession,
     ams_url: str,
@@ -347,7 +252,7 @@ async def _store_directly_to_ams(
                 "id": str(_uuid.uuid4()),
                 "text": content,
                 "session_id": user_id,
-                "namespace": "pricing",
+                "namespace": "entitlements",
             }
         ],
         "deduplicate": False,
@@ -381,15 +286,6 @@ async def _store_directly_to_ams(
 # ---------------------------------------------------------------------------
 
 
-class ChangePriceRequest(BaseModel):
-    new_price: float
-    product_name: str = ""
-
-
-class TriggerSignalRequest(BaseModel):
-    product_name: str = ""
-
-
 class RunRequest(BaseModel):
     """AG-UI protocol run request body."""
 
@@ -421,7 +317,7 @@ async def index() -> JSONResponse:
 
 @app.get("/state")
 async def get_state() -> JSONResponse:
-    """Return full live demo state: DB price + Revok confidence + event log."""
+    """Return full live demo state: DB subscription + Revok confidence + event log."""
     return JSONResponse(await _build_state_snapshot())
 
 
@@ -438,20 +334,14 @@ async def load_memory() -> JSONResponse:
 
 
 async def _run_load_memory() -> None:
-    """Background worker: store pricing memory for every catalog product in Redis AMS."""
+    """Background worker: store subscription entitlement memory in Redis AMS for both agents."""
     try:
-        all_rows = await db_module.list_products()
-        catalog_rows = [r for r in all_rows if r[db_module.COL_NAME] in PRODUCT_CATALOG]
-        if not catalog_rows:
-            fallback = await db_module.get_price(db_module.PRODUCT_NAME)
-            catalog_rows = [fallback] if fallback else []
-
-        if not catalog_rows:
-            _log.warning("_run_load_memory: no catalog products found in database")
+        sub = await db_module.get_subscription()
+        if not sub:
+            _log.warning("_run_load_memory: no subscription record found in database")
             return
 
         ams_url = os.getenv("AMS_URL", "http://localhost:8000")
-        loaded: list[dict] = []
 
         # Pin the health cache to "ok" for the full duration of Load Memory.
         _ams_health_cache["ok"] = True
@@ -464,41 +354,39 @@ async def _run_load_memory() -> None:
                 _purge_user_memories(session, ams_url, _with_revok.user_id),
             )
 
-        # Write sequentially per product (both agents concurrently per product).
-        async with aiohttp.ClientSession() as session:
-            for row in catalog_rows:
-                product = str(row[db_module.COL_NAME])
-                price = float(row[db_module.COL_PRICE])
-                content = (
-                    f"Customer budget approved {product} at ${price:.0f}/month. "
-                    "Verified pricing from database."
-                )
-                await asyncio.gather(
-                    _store_directly_to_ams(
-                        session, ams_url, _without_revok.user_id, content
-                    ),
-                    _store_directly_to_ams(
-                        session, ams_url, _with_revok.user_id, content
-                    ),
-                )
-                loaded.append(
-                    {"product": product, "price": price, "memory_content": content}
-                )
-                state_module.add_event(
-                    _demo_state,
-                    f"Memory loaded: {product} at ${price:.0f}/month",
-                    kind="memory",
-                )
-                state_module.save(_demo_state)
+        tier = sub[db_module.COL_TIER]
+        seats = sub[db_module.COL_SEATS]
+        features = sub[db_module.COL_FEATURES]
+        api_rate = sub[db_module.COL_API_RATE]
+        billing = sub[db_module.COL_BILLING]
+        content = (
+            f"Customer subscription tier: {tier}. "
+            f"Seat limit: {seats}. "
+            f"Feature entitlements: {features}. "
+            f"API rate limit: {api_rate}. "
+            f"Billing terms: {billing}. "
+            "Verified from database."
+        )
 
-        if loaded:
-            primary = loaded[0]
-            _demo_state["memory_content"] = primary["memory_content"]
-            _demo_state["active_product"] = primary["product"]
-            _demo_state["active_entity_key"] = PRODUCT_CATALOG.get(
-                primary["product"], _entity_key
+        async with aiohttp.ClientSession() as session:
+            await asyncio.gather(
+                _store_directly_to_ams(session, ams_url, _without_revok.user_id, content),
+                _store_directly_to_ams(session, ams_url, _with_revok.user_id, content),
             )
-            _demo_state["db_price"] = primary["price"]
+
+        _demo_state["memory_content"] = content
+        _demo_state["db_subscription_tier"] = tier
+        _demo_state["db_seat_limit"] = seats
+        _demo_state["db_feature_entitlements"] = features
+        _demo_state["db_api_rate_limit"] = api_rate
+        _demo_state["db_billing_terms"] = billing
+
+        state_module.add_event(
+            _demo_state,
+            f"Customer profile loaded: {tier} tier, {seats} seats",
+            kind="memory",
+        )
+        state_module.save(_demo_state)
 
     except Exception:
         _log.exception("_run_load_memory failed")
@@ -509,50 +397,45 @@ async def _run_load_memory() -> None:
         state_module.save(_demo_state)
 
 
-@app.post("/actions/change-price")
-async def change_price(body: ChangePriceRequest) -> JSONResponse:
-    """Update price in SQLite (simulates a SQL change in production)."""
-    product = body.product_name.strip() or db_module.PRODUCT_NAME
-    updated = await db_module.update_price(product, body.new_price)
-    _demo_state["db_price"] = updated[db_module.COL_PRICE]
+@app.post("/actions/downgrade-plan")
+async def downgrade_plan() -> JSONResponse:
+    """Downgrade customer subscription to Starter tier in SQLite.
+
+    Simulates a billing system webhook that changes the customer's plan
+    without the agent being notified.  The agent's memory still says Enterprise.
+    """
+    updated = await db_module.downgrade_to_starter()
+    _demo_state["db_subscription_tier"] = updated[db_module.COL_TIER]
+    _demo_state["db_seat_limit"] = updated[db_module.COL_SEATS]
+    _demo_state["db_feature_entitlements"] = updated[db_module.COL_FEATURES]
+    _demo_state["db_api_rate_limit"] = updated[db_module.COL_API_RATE]
+    _demo_state["db_billing_terms"] = updated[db_module.COL_BILLING]
     _demo_state["db_updated_at"] = updated[db_module.COL_UPDATED]
     state_module.add_event(
         _demo_state,
-        f"Price changed to ${body.new_price:.0f}/month for {product} in database",
-        kind="db",
+        f"Billing system downgraded plan to {updated[db_module.COL_TIER]} "
+        f"({updated[db_module.COL_SEATS]} seats)",
+        kind="billing",
     )
     state_module.save(_demo_state)
-    return JSONResponse(
-        {
-            "updated": True,
-            "product": product,
-            "new_price": body.new_price,
-            "updated_at": updated[db_module.COL_UPDATED],
-        }
-    )
+    return JSONResponse({"updated": True, "subscription": updated})
 
 
-@app.post("/actions/trigger-signal")
-async def trigger_signal(
-    body: TriggerSignalRequest | None = Body(default=None),
-) -> JSONResponse:
-    """Simulate a CDC event: an external system signals that pricing data changed.
+@app.post("/actions/fire-signal")
+async def fire_signal() -> JSONResponse:
+    """Simulate a CDC event: billing system signals that the subscription changed.
 
     Sends a notification through the Revok proxy (WITH-Revok agent only) via
     POST /v1/long-term-memory so Revok can intercept the write, record the
-    signal, and degrade confidence.  The X-Revok-Entity header identifies the
-    entity explicitly.  Pricing memory is intentionally NOT overwritten — the
-    agent must re-verify from the live database to discover the new price.
+    signal, and degrade confidence on the subscription-tier entity.  BFS
+    propagation will also degrade all four dependent entities.
     """
     if _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
-    product = (body.product_name.strip() if body else "") or db_module.PRODUCT_NAME
-    entity_key = PRODUCT_CATALOG.get(product, product.lower().replace(" ", "_"))
-
     cdc_content = (
-        f"External system notification: pricing record updated for {product}. "
-        "Agent memory may be stale — re-verify before quoting."
+        "Billing system notification: subscription plan changed for customer. "
+        "Agent memory may be stale — re-verify all entitlements before answering."
     )
 
     entity: dict[str, Any] | None = None
@@ -566,26 +449,42 @@ async def trigger_signal(
                         {
                             "text": cdc_content,
                             "session_id": _with_revok.user_id,
-                            "namespace": "pricing",
+                            "namespace": "entitlements",
                         }
                     ]
                 },
-                headers={"X-Revok-Entity": entity_key},
+                headers={"X-Revok-Entity": _ROOT_ENTITY_KEY},
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
-                _log.info("CDC signal sent through Revok proxy: status=%s", resp.status)
+                _log.info("Billing CDC signal sent through Revok proxy: status=%s", resp.status)
+
+            # Also POST to /signals to trigger causal propagation in SignalProcessor
+            async with session.post(
+                f"{revok_url}/signals",
+                json={
+                    "entity_refs": [_ROOT_ENTITY_KEY],
+                    "severity": "high",
+                    "source": "billing-cdc",
+                },
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as sresp:
+                _log.info("Causal propagation signal sent: status=%s", sresp.status)
 
             await asyncio.sleep(0.5)
 
-            encoded = urllib.parse.quote(entity_key, safe="")
+            encoded = urllib.parse.quote(_ROOT_ENTITY_KEY, safe="")
             async with session.get(
                 f"{revok_url}/v1/entities/{encoded}",
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as eresp:
                 if eresp.status == 200:
                     entity = await eresp.json()
+
+            # Also fetch propagated scores for all dependent entities
+            dep_scores = await _fetch_dependent_scores(revok_url, session)
+
     except Exception as exc:
-        _log.error("trigger-signal failed: %s", exc)
+        _log.error("fire-signal failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=502)
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -597,11 +496,12 @@ async def trigger_signal(
     _demo_state["confidence_score"] = score
     _demo_state["confidence_status"] = conf_status
     _demo_state["signal_count"] = sig_count
+    _demo_state["dependent_scores"] = dep_scores
 
     score_str = f"{score:.2f}" if score is not None else "N/A"
     state_module.add_event(
         _demo_state,
-        f"CDC signal fired — {product} pricing data changed, confidence now {conf_status} (score={score_str})",
+        f"Billing CDC signal fired — subscription data changed, confidence now {conf_status} (score={score_str})",
         kind="signal",
     )
     state_module.save(_demo_state)
@@ -609,104 +509,46 @@ async def trigger_signal(
     return JSONResponse(
         {
             "fired": True,
-            "entity_key": entity_key,
+            "entity_key": _ROOT_ENTITY_KEY,
             "confidence_score": score,
             "confidence_status": conf_status,
             "signal_count": sig_count,
             "last_signal_at": now_iso,
+            "dependent_scores": dep_scores,
         }
     )
 
 
-@app.post("/actions/signal-pressure")
-async def signal_pressure(
-    body: TriggerSignalRequest | None = Body(default=None),
-) -> JSONResponse:
-    """Simulate a burst of CDC events to drive confidence through degraded → stale.
+async def _fetch_dependent_scores(
+    revok_url: str,
+    session: aiohttp.ClientSession,
+) -> dict[str, float | None]:
+    """Query Revok for the propagated confidence score of each dependent entity.
 
-    Fires 3 signals with 400 ms gaps so the dashboard shows the full
-    fresh → degraded → stale progression in real time.
+    Returns a dict mapping entity key → float score (or None if not yet tracked).
     """
-    if _with_revok is None:
-        return JSONResponse({"error": "agents not ready"}, status_code=503)
-
-    product = (body.product_name.strip() if body else "") or db_module.PRODUCT_NAME
-    entity_key = PRODUCT_CATALOG.get(product, product.lower().replace(" ", "_"))
-    encoded = urllib.parse.quote(entity_key, safe="")
-    revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
-
-    snapshots: list[dict] = []
-
-    async with aiohttp.ClientSession() as session:
-        for i in range(1, 4):
-            cdc_content = (
-                f"External system notification #{i}: pricing record updated for {product}. "
-                "Agent memory may be stale — re-verify before quoting."
-            )
-            try:
-                async with session.post(
-                    f"{revok_url}/v1/long-term-memory",
-                    json={
-                        "memories": [
-                            {
-                                "text": cdc_content,
-                                "session_id": _with_revok.user_id,
-                                "namespace": "pricing",
-                            }
-                        ]
-                    },
-                    headers={"X-Revok-Entity": entity_key},
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    _log.info(
-                        "Signal pressure %d/%d sent: status=%s", i, 3, resp.status
-                    )
-            except Exception as exc:
-                _log.error("signal-pressure send %d failed: %s", i, exc)
-
-            await asyncio.sleep(0.4)
-
-            try:
-                async with session.get(
-                    f"{revok_url}/v1/entities/{encoded}",
-                    timeout=aiohttp.ClientTimeout(total=5),
-                ) as eresp:
-                    entity = await eresp.json() if eresp.status == 200 else None
-            except Exception:
-                entity = None
-
-            score: float | None = float(entity["score"]) if entity else None
-            sig_count: int = int(entity["signal_count"]) if entity else i
-            conf_status = _score_to_status(score)
-            score_str = f"{score:.2f}" if score is not None else "N/A"
-            snapshots.append({"signal": i, "score": score, "status": conf_status})
-
-            _demo_state["confidence_score"] = score
-            _demo_state["confidence_status"] = conf_status
-            _demo_state["signal_count"] = sig_count
-            _demo_state["last_signal_at"] = datetime.now(timezone.utc).isoformat()
-
-            state_module.add_event(
-                _demo_state,
-                f"[Pressure {i}/3] Signal fired → score={score_str}, status={conf_status}",
-                kind="signal",
-            )
-            state_module.save(_demo_state)
-
-    final = snapshots[-1] if snapshots else {}
-    return JSONResponse(
-        {
-            "fired": True,
-            "signals_sent": len(snapshots),
-            "entity_key": entity_key,
-            "final_score": final.get("score"),
-            "final_status": final.get("status"),
-            "progression": snapshots,
-        }
-    )
+    scores: dict[str, float | None] = {}
+    for key in _DEPENDENT_ENTITY_KEYS:
+        encoded = urllib.parse.quote(key, safe="")
+        try:
+            async with session.get(
+                f"{revok_url}/v1/entities/{encoded}",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    scores[key] = float(data.get("score", 1.0))
+                elif resp.status == 404:
+                    scores[key] = None
+                else:
+                    scores[key] = None
+        except Exception as exc:
+            _log.debug("_fetch_dependent_scores(%s) failed: %s", key, exc)
+            scores[key] = None
+    return scores
 
 
-_DEFAULT_QUESTION = "What is the current price for Orion Cache per month?"
+_DEFAULT_QUESTION = "What does this customer's current plan include?"
 
 
 class AskAgentRequest(BaseModel):
@@ -715,34 +557,26 @@ class AskAgentRequest(BaseModel):
 
 @app.post("/actions/ask-agent")
 async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONResponse:
-    """Run the sales agent in both modes; store answers in state."""
+    """Run the customer success agent in both modes; store answers in state."""
     if _without_revok is None or _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
     question = (body.question.strip() if body else "") or _DEFAULT_QUESTION
-    product, detected_entity_key = _detect_product(question)
 
-    db_row = await db_module.get_price(product)
-    if db_row:
-        _demo_state["db_price"] = db_row[db_module.COL_PRICE]
-        _demo_state["db_updated_at"] = db_row[db_module.COL_UPDATED]
-    _demo_state["active_product"] = product
-    _demo_state["active_entity_key"] = detected_entity_key
+    state_module.add_event(
+        _demo_state,
+        "Asking both agents about subscription entitlements (running in parallel)…",
+        kind="info",
+    )
+    state_module.save(_demo_state)
 
     async with aiohttp.ClientSession() as session:
-        state_module.add_event(
-            _demo_state,
-            f"Asking both agents about {product} (running in parallel)…",
-            kind="info",
-        )
-        state_module.save(_demo_state)
-
         ans_without, ans_with = await asyncio.gather(
-            _without_revok.answer_budget_question(
-                session, product, None, question=question
+            _without_revok.answer_entitlement_question(
+                session, None, question=question
             ),
-            _with_revok.answer_budget_question(
-                session, product, detected_entity_key, question=question
+            _with_revok.answer_entitlement_question(
+                session, _ROOT_ENTITY_KEY, question=question
             ),
         )
 
@@ -759,13 +593,8 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
             "answer": ans_without.answer,
             "memory_quote": ans_without.memory_quote,
             "re_verified": ans_without.re_verified,
-            "live_price": ans_without.live_price,
+            "live_entitlements": ans_without.live_entitlements,
         }
-
-        if ans_with.re_verified and ans_with.live_price is not None:
-            await _heal_pricing_memory(
-                _with_revok.user_id, product, ans_with.live_price
-            )
 
         with_mode = ans_with.confidence_status + (
             " → re-verified" if ans_with.re_verified else ""
@@ -782,8 +611,20 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
             "confidence_status": ans_with.confidence_status,
             "signal_count": ans_with.signal_count,
             "re_verified": ans_with.re_verified,
-            "live_price": ans_with.live_price,
+            "live_entitlements": ans_with.live_entitlements,
         }
+
+        # Session scoreboard
+        stats: dict = _demo_state.setdefault(
+            "session_stats",
+            {"questions": 0, "drift_caught": 0, "wrong_answers": 0, "support_escalations_prevented": 0},
+        )
+        stats["questions"] += 1
+        if ans_with.re_verified:
+            stats["drift_caught"] += 1
+            stats["wrong_answers"] += 1
+            stats["support_escalations_prevented"] += 1
+
         state_module.save(_demo_state)
 
     return JSONResponse(
@@ -833,8 +674,8 @@ async def health_check() -> JSONResponse:
 
     # SQLite
     try:
-        row = await db_module.get_price(db_module.PRODUCT_NAME)
-        services["sqlite"] = "ok" if row is not None else "degraded"
+        sub = await db_module.get_subscription()
+        services["sqlite"] = "ok" if sub is not None else "degraded"
     except Exception:
         services["sqlite"] = "error"
 
@@ -879,21 +720,9 @@ async def health_check() -> JSONResponse:
 
 @app.get("/stream/ask-agent")
 async def stream_ask_agent(
-    q: str = Query(default="What is the current price for Orion Cache per month?"),
+    q: str = Query(default=_DEFAULT_QUESTION),
 ) -> StreamingResponse:
-    """SSE endpoint — runs both agents concurrently and multiplexes their events.
-
-    Event types (all carry an ``agent`` field — ``"without_revok"`` or
-    ``"with_revok"``):
-
-    * ``agent_started``
-    * ``memory_loaded``
-    * ``confidence_checked``
-    * ``db_reverified``
-    * ``token``
-    * ``agent_finished``   — includes latency_ms, llm_tokens, path, answer
-    * ``done``
-    """
+    """SSE endpoint — runs both agents concurrently and multiplexes their events."""
 
     async def generate():
         def evt(data: dict) -> str:
@@ -903,26 +732,17 @@ async def stream_ask_agent(
             yield evt({"type": "error", "message": "agents not ready"})
             return
 
-        product, detected_entity_key = _detect_product(q)
-
-        db_row_for_product = await db_module.get_price(product)
-        if db_row_for_product:
-            _demo_state["db_price"] = db_row_for_product[db_module.COL_PRICE]
-            _demo_state["db_updated_at"] = db_row_for_product[db_module.COL_UPDATED]
-        _demo_state["active_product"] = product
-        _demo_state["active_entity_key"] = detected_entity_key
-
         queue: asyncio.Queue[dict] = asyncio.Queue()
         finished: dict[str, dict] = {}
 
         async def drain(
-            agent: AgentFrameworkPricingSalesAgent, entity_key: str | None
+            agent: AgentFrameworkCustomerSuccessAgent, entity_key: str | None
         ) -> None:
             agent_id = "with_revok" if agent.use_revok else "without_revok"
             try:
                 async with aiohttp.ClientSession() as sess:
-                    async for event in agent.answer_budget_question_streaming(
-                        sess, product, entity_key, question=q
+                    async for event in agent.answer_entitlement_question_streaming(
+                        sess, entity_key, question=q
                     ):
                         await queue.put(event)
             except Exception as exc:
@@ -933,7 +753,7 @@ async def stream_ask_agent(
                 await queue.put({"type": "_done"})
 
         t1 = asyncio.create_task(drain(_without_revok, None))
-        t2 = asyncio.create_task(drain(_with_revok, detected_entity_key))
+        t2 = asyncio.create_task(drain(_with_revok, _ROOT_ENTITY_KEY))
 
         done_count = 0
         while done_count < 2:
@@ -943,32 +763,12 @@ async def stream_ask_agent(
                 continue
             if event["type"] == "agent_finished":
                 finished[event["agent"]] = event
-            elif event["type"] == "confidence_checked":
-                score = event.get("score")
-                status = event.get("status", "unknown")
-                sigs = event.get("signal_count", 0)
-                score_str = f"{score:.2f}" if score is not None else "N/A"
-                state_module.add_event(
-                    _demo_state,
-                    f"[Revok] Confidence check → status={status}, score={score_str}, signals={sigs}",
-                    kind="signal",
-                )
-            elif event["type"] == "db_reverified":
-                live_p = event.get("live_price")
-                reason = event.get("reason", "stale")
-                price_str = f"${live_p:.0f}/month" if live_p is not None else "unknown"
-                state_module.add_event(
-                    _demo_state,
-                    f"[Revok] Memory was {reason} — re-verified from DB → live price={price_str}",
-                    kind="database",
-                )
             yield evt(event)
 
         for t in (t1, t2):
             if not t.done():
                 t.cancel()
 
-        # ── Update demo state from finished results ─────────────────────
         without = finished.get("without_revok", {})
         with_r = finished.get("with_revok", {})
 
@@ -979,15 +779,13 @@ async def stream_ask_agent(
                 "answer": without.get("answer", ""),
                 "memory_quote": without.get("memory_quote", ""),
                 "re_verified": without.get("re_verified", False),
-                "live_price": without.get("live_price"),
+                "live_entitlements": without.get("live_entitlements"),
                 "latency_ms": without.get("latency_ms"),
                 "llm_tokens": without.get("llm_tokens"),
-                "path": without.get("path"),
             }
             state_module.add_event(
                 _demo_state,
-                f"Without Revok answered ({without.get('path', 'memory')}): "
-                f"{without.get('answer', '')[:80]}",
+                f"Without Revok answered: {without.get('answer', '')[:80]}",
                 kind="answer",
             )
 
@@ -995,11 +793,6 @@ async def stream_ask_agent(
             with_mode = with_r.get("confidence_status", "unknown")
             if with_r.get("re_verified"):
                 with_mode += " → re-verified"
-                live_p = with_r.get("live_price")
-                if live_p is not None:
-                    await _heal_pricing_memory(
-                        _with_revok.user_id, product, float(live_p)
-                    )
             _demo_state["answer_with_revok"] = {
                 "answer": with_r.get("answer", ""),
                 "memory_quote": with_r.get("memory_quote", ""),
@@ -1007,10 +800,7 @@ async def stream_ask_agent(
                 "confidence_status": with_r.get("confidence_status", "unknown"),
                 "signal_count": with_r.get("signal_count", 0),
                 "re_verified": with_r.get("re_verified", False),
-                "live_price": with_r.get("live_price"),
-                "latency_ms": with_r.get("latency_ms"),
-                "llm_tokens": with_r.get("llm_tokens"),
-                "path": with_r.get("path"),
+                "live_entitlements": with_r.get("live_entitlements"),
             }
             state_module.add_event(
                 _demo_state,
@@ -1018,16 +808,15 @@ async def stream_ask_agent(
                 kind="answer",
             )
 
-        # ── Session scoreboard ──────────────────────────────────────────
         stats: dict = _demo_state.setdefault(
             "session_stats",
-            {"questions": 0, "drift_caught": 0, "wrong_answers": 0, "cost_saved": 0.0},
+            {"questions": 0, "drift_caught": 0, "wrong_answers": 0, "support_escalations_prevented": 0},
         )
         stats["questions"] += 1
         if with_r.get("re_verified"):
             stats["drift_caught"] += 1
             stats["wrong_answers"] += 1
-            stats["cost_saved"] = round(stats.get("cost_saved", 0.0) + 500.0, 2)
+            stats["support_escalations_prevented"] += 1
 
         state_module.save(_demo_state)
         yield evt({"type": "done"})
@@ -1041,30 +830,10 @@ async def stream_ask_agent(
 
 @app.post("/v1/runs")
 async def agent_run(body: RunRequest) -> StreamingResponse:
-    """AG-UI protocol streaming endpoint.
-
-    Accepts an AG-UI run request and streams AG-UI-compliant events for the
-    WITH REVOK agent.  Also runs the WITHOUT REVOK agent in parallel so the
-    comparison answer panels stay populated.  Updates ``_demo_state`` on
-    completion so the ``/stream`` SSE picks up the results.
-
-    AG-UI events emitted (for the WITH REVOK agent):
-        RUN_STARTED
-        TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END  (check_memory)
-        CUSTOM  name=memory_loaded
-        TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END  (get_revok_confidence)
-        CUSTOM  name=revok_confidence
-        [TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END  (get_current_price)]
-        [CUSTOM  name=db_reverified]
-        TEXT_MESSAGE_START / TEXT_MESSAGE_CONTENT … / TEXT_MESSAGE_END
-        STATE_SNAPSHOT
-        RUN_FINISHED
-        CUSTOM  name=without_revok_answer
-    """
+    """AG-UI protocol streaming endpoint for the WITH REVOK agent."""
     if _without_revok is None or _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
-    # Extract the last user message as the question
     question = _DEFAULT_QUESTION
     for m in reversed(body.messages):
         if m.get("role") == "user":
@@ -1073,28 +842,15 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
                 question = content.strip()
                 break
 
-    product, entity_key = _detect_product(question)
     run_id = body.runId or _uuid.uuid4().hex
     thread_id = body.threadId or _with_revok.user_id
-
-    # Prime active-product state so the /stream endpoint stays consistent
-    db_row = await db_module.get_price(product)
-    if db_row:
-        _demo_state["db_price"] = db_row[db_module.COL_PRICE]
-        _demo_state["db_updated_at"] = db_row[db_module.COL_UPDATED]
-    _demo_state["active_product"] = product
-    _demo_state["active_entity_key"] = entity_key
 
     async def generate():
         snapshot: dict = {}
 
-        # ── Stream AG-UI events for WITH REVOK agent ────────────────
-        # WITHOUT REVOK runs AFTER the stream to avoid asyncio.create_task()
-        # which breaks the AF SDK's ContextVar telemetry (Token created in
-        # a different Context error).
         try:
-            async for event in _with_revok.answer_budget_question_agui(
-                product, entity_key, question,
+            async for event in _with_revok.answer_entitlement_question_agui(
+                _ROOT_ENTITY_KEY, question,
                 run_id=run_id, thread_id=thread_id,
             ):
                 if event["type"] == "STATE_SNAPSHOT":
@@ -1105,23 +861,20 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
             yield f"data: {json.dumps({'type': 'RUN_ERROR', 'message': str(exc)})}\n\n"
             return
 
-        # ── WITHOUT REVOK — run sequentially after stream ────────────
         ans_without = None
         try:
             async with aiohttp.ClientSession() as sess:
-                ans_without = await _without_revok.answer_budget_question(
-                    sess, product, None, question=question
+                ans_without = await _without_revok.answer_entitlement_question(
+                    sess, None, question=question
                 )
         except Exception as exc:
             _log.warning("without-revok agent failed: %s", exc)
 
-        # ── Emit WITHOUT REVOK answer as CUSTOM event ────────────────────
         if ans_without:
-            yield f"data: {json.dumps({'type': 'CUSTOM', 'name': 'without_revok_answer', 'value': {'answer': ans_without.answer, 'memory_quote': ans_without.memory_quote, 're_verified': ans_without.re_verified, 'live_price': ans_without.live_price}})}\n\n"
+            yield f"data: {json.dumps({'type': 'CUSTOM', 'name': 'without_revok_answer', 'value': {'answer': ans_without.answer, 'memory_quote': ans_without.memory_quote, 're_verified': ans_without.re_verified, 'live_entitlements': ans_without.live_entitlements}})}\n\n"
 
-        # ── Update demo state ─────────────────────────────────────────────
         if snapshot:
-            live_price = snapshot.get("live_price")
+            live_ent = snapshot.get("live_entitlements")
             _demo_state["answer_with_revok"] = {
                 "answer": snapshot.get("answer", ""),
                 "memory_quote": snapshot.get("memory_quote", ""),
@@ -1129,12 +882,8 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
                 "confidence_status": snapshot.get("confidence_status", "unknown"),
                 "signal_count": snapshot.get("signal_count", 0),
                 "re_verified": snapshot.get("re_verified", False),
-                "live_price": live_price,
+                "live_entitlements": live_ent,
             }
-            if live_price is not None:
-                await _heal_pricing_memory(
-                    _with_revok.user_id, product, float(live_price)
-                )
             with_mode = snapshot.get("confidence_status", "unknown")
             if snapshot.get("re_verified"):
                 with_mode = f"{with_mode} → re-verified"
@@ -1151,7 +900,7 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
                 "answer": ans_without.answer,
                 "memory_quote": ans_without.memory_quote,
                 "re_verified": ans_without.re_verified,
-                "live_price": ans_without.live_price,
+                "live_entitlements": ans_without.live_entitlements,
             }
             state_module.add_event(
                 _demo_state,
@@ -1159,16 +908,15 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
                 kind="answer",
             )
 
-        # Session scoreboard
         stats: dict = _demo_state.setdefault(
             "session_stats",
-            {"questions": 0, "drift_caught": 0, "wrong_answers": 0, "cost_saved": 0.0},
+            {"questions": 0, "drift_caught": 0, "wrong_answers": 0, "support_escalations_prevented": 0},
         )
         stats["questions"] += 1
         if snapshot.get("re_verified"):
             stats["drift_caught"] += 1
             stats["wrong_answers"] += 1
-            stats["cost_saved"] = round(stats.get("cost_saved", 0.0) + 500.0, 2)
+            stats["support_escalations_prevented"] += 1
 
         state_module.save(_demo_state)
 
@@ -1181,10 +929,8 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
 
 async def _build_state_snapshot() -> dict[str, Any]:
     """Return the canonical demo-state snapshot used by ``/state`` and ``/stream``."""
-    active_product = _demo_state.get("active_product", db_module.PRODUCT_NAME)
-    db_row = await db_module.get_price(active_product)
-    all_db_products = await db_module.list_products()
-    entity = await _fetch_revok_entity()
+    sub = await db_module.get_subscription()
+    entity = await _fetch_revok_entity(_ROOT_ENTITY_KEY)
     revok_ok = await _revok_reachable()
 
     ams_url = os.getenv("AMS_URL", "http://localhost:8000")
@@ -1218,95 +964,34 @@ async def _build_state_snapshot() -> dict[str, Any]:
         sig_count = _demo_state.get("signal_count", 0)
         conf_status = _score_to_status(score)
 
-    if db_row:
-        _demo_state["db_price"] = db_row[db_module.COL_PRICE]
-        _demo_state["db_updated_at"] = db_row[db_module.COL_UPDATED]
+    if sub:
+        _demo_state["db_subscription_tier"] = sub[db_module.COL_TIER]
+        _demo_state["db_seat_limit"] = sub[db_module.COL_SEATS]
+        _demo_state["db_feature_entitlements"] = sub[db_module.COL_FEATURES]
+        _demo_state["db_api_rate_limit"] = sub[db_module.COL_API_RATE]
+        _demo_state["db_billing_terms"] = sub[db_module.COL_BILLING]
+        _demo_state["db_updated_at"] = sub[db_module.COL_UPDATED]
     _demo_state["confidence_score"] = score
     _demo_state["confidence_status"] = conf_status
     _demo_state["signal_count"] = sig_count
 
-    def _entity_key_for(name: str) -> str:
-        return PRODUCT_CATALOG.get(name, name.lower().replace(" ", "_"))
-
-    product_entities = await asyncio.gather(
-        *[
-            _fetch_revok_entity(_entity_key_for(row[db_module.COL_NAME]))
-            for row in all_db_products
-        ]
-    )
-    products: list[dict[str, Any]] = []
-    for row, ent in zip(all_db_products, product_entities):
-        if ent is not None:
-            p_score: float | None = float(ent["score"])
-            p_sig = int(ent["signal_count"])
-            p_status = _score_to_status(p_score)
-        else:
-            p_score = 1.0 if _demo_state.get("memory_content") else None
-            p_sig = 0
-            p_status = (
-                "fresh" if _demo_state.get("memory_content") else _score_to_status(None)
-            )
-        products.append(
-            {
-                "name": row[db_module.COL_NAME],
-                "entity_key": _entity_key_for(row[db_module.COL_NAME]),
-                "price": row[db_module.COL_PRICE],
-                "updated_at": row[db_module.COL_UPDATED],
-                "confidence_score": p_score,
-                "confidence_status": p_status,
-                "signal_count": p_sig,
-                "last_signal_at": float(ent["transaction_time"]) if ent and ent.get("transaction_time") else None,
-            }
-        )
+    # Fetch propagated scores for dependent entities
+    revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
+    try:
+        async with aiohttp.ClientSession() as sess:
+            dep_scores = await _fetch_dependent_scores(revok_url, sess)
+    except Exception:
+        dep_scores = {k: None for k in _DEPENDENT_ENTITY_KEYS}
+    _demo_state["dependent_scores"] = dep_scores
 
     return {
         **_demo_state,
         "memory_loading": _demo_state.get("memory_loading", False),
-        "db_product": active_product,
-        "product_name": active_product,
-        "entity_key": _demo_state.get("active_entity_key", _entity_key),
+        "entity_key": _ROOT_ENTITY_KEY,
         "revok_reachable": revok_ok,
         "services": {"revok": revok_ok, "redis_ams": ams_ok},
-        "products": products,
+        "dependent_scores": dep_scores,
     }
-
-
-# ---------------------------------------------------------------------------
-# Products endpoints
-# ---------------------------------------------------------------------------
-
-
-@app.get("/products")
-async def list_products() -> JSONResponse:
-    """Return all tracked products with their live price and Revok confidence."""
-    all_db = await db_module.list_products()
-
-    def _ekey(name: str) -> str:
-        return PRODUCT_CATALOG.get(name, name.lower().replace(" ", "_"))
-
-    entities = await asyncio.gather(
-        *[_fetch_revok_entity(_ekey(r[db_module.COL_NAME])) for r in all_db]
-    )
-    results = []
-    for row, ent in zip(all_db, entities):
-        if ent is not None:
-            score: float | None = float(ent["score"])
-            sig = int(ent["signal_count"])
-        else:
-            score = None
-            sig = 0
-        results.append(
-            {
-                "name": row[db_module.COL_NAME],
-                "entity_key": _ekey(row[db_module.COL_NAME]),
-                "price": row[db_module.COL_PRICE],
-                "updated_at": row[db_module.COL_UPDATED],
-                "confidence_score": score,
-                "confidence_status": _score_to_status(score),
-                "signal_count": sig,
-            }
-        )
-    return JSONResponse({"total": len(results), "products": results})
 
 
 @app.get("/stream")
@@ -1347,30 +1032,31 @@ async def stream_state() -> StreamingResponse:
 
 @app.post("/actions/reset")
 async def reset_demo() -> JSONResponse:
-    """Clear Redis AMS memories, reset SQLite price to seed, clear Revok entity state."""
+    """Clear Redis AMS memories, reset SQLite subscription to Enterprise, clear Revok entity state."""
     global _demo_state
     if _without_revok is None or _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
     revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
-    encoded = urllib.parse.quote(_entity_key, safe="")
     ams_url = os.getenv("AMS_URL", "http://localhost:8000")
     async with aiohttp.ClientSession() as session:
         await asyncio.gather(
             _without_revok.clear_memories(session),
             _with_revok.clear_memories(session),
         )
-        try:
-            async with session.delete(
-                f"{revok_url}/v1/entities/{encoded}",
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                _log.info("Revok entity reset: status=%s", resp.status)
-        except Exception as exc:
-            _log.warning("Could not reset Revok entity state: %s", exc)
+        # Reset all tracked entities in Revok
+        for key in [_ROOT_ENTITY_KEY] + _DEPENDENT_ENTITY_KEYS:
+            encoded = urllib.parse.quote(key, safe="")
+            try:
+                async with session.delete(
+                    f"{revok_url}/v1/entities/{encoded}",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    _log.info("Revok entity reset %s: status=%s", key, resp.status)
+            except Exception as exc:
+                _log.warning("Could not reset Revok entity %s: %s", key, exc)
 
-    # Poll AMS until memories are actually gone (forget can be async on the AMS side).
-    # This prevents "ask agent immediately after reset" from seeing stale memories.
+    # Poll AMS until memories are actually gone
     user_ids = [_without_revok.user_id, _with_revok.user_id]
     for _attempt in range(8):  # up to ~4 s
         await asyncio.sleep(0.5)
@@ -1380,7 +1066,7 @@ async def reset_demo() -> JSONResponse:
                 for uid in user_ids:
                     async with chk.post(
                         f"{ams_url}/v1/long-term-memory/search",
-                        json={"text": "price", "search_mode": "keyword",
+                        json={"text": "subscription", "search_mode": "keyword",
                               "session_id": {"eq": uid}, "limit": 1},
                         timeout=aiohttp.ClientTimeout(total=5),
                     ) as resp:
@@ -1398,13 +1084,18 @@ async def reset_demo() -> JSONResponse:
     else:
         _log.warning("AMS purge not confirmed empty after 4 s — proceeding anyway")
 
-    await db_module.reset_to_seed()
+    await db_module.reset_to_enterprise()
     _demo_state = state_module.reset_state()
 
-    db_row = await db_module.get_price(db_module.PRODUCT_NAME)
-    if db_row:
-        _demo_state["db_price"] = db_row[db_module.COL_PRICE]
-        _demo_state["db_updated_at"] = db_row[db_module.COL_UPDATED]
+    sub = await db_module.get_subscription()
+    if sub:
+        _demo_state["db_subscription_tier"] = sub[db_module.COL_TIER]
+        _demo_state["db_seat_limit"] = sub[db_module.COL_SEATS]
+        _demo_state["db_feature_entitlements"] = sub[db_module.COL_FEATURES]
+        _demo_state["db_api_rate_limit"] = sub[db_module.COL_API_RATE]
+        _demo_state["db_billing_terms"] = sub[db_module.COL_BILLING]
+        _demo_state["db_updated_at"] = sub[db_module.COL_UPDATED]
+    _demo_state["dependent_scores"] = {}
 
     state_module.add_event(_demo_state, "Demo reset to initial state", kind="info")
     state_module.save(_demo_state)

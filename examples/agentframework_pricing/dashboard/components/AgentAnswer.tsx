@@ -29,7 +29,7 @@ function memoryNotification(
   }
   if (reVerified) {
     return {
-      text: "Memory was stale — Revok fetched live data before answering ✅",
+      text: "Memory was stale — Revok re-verified all entitlements before answering ✅",
       className: "bg-sky-500/15 text-sky-300 border-sky-500/40",
     };
   }
@@ -41,12 +41,12 @@ function memoryNotification(
       };
     case "degraded":
       return {
-        text: "Signals detected — answer may lag the market ⚠️",
+        text: "Signals detected — entitlements may have changed, verify with billing ⚠️",
         className: "bg-amber-500/15 text-amber-300 border-amber-500/40",
       };
     case "stale":
       return {
-        text: "Memory was stale — Revok fetched live data before answering ✅",
+        text: "Memory was stale — Revok re-verified all entitlements before answering ✅",
         className: "bg-sky-500/15 text-sky-300 border-sky-500/40",
       };
     default:
@@ -115,7 +115,7 @@ export function AgentAnswer({ state }: AgentAnswerProps) {
           <TypewriterText text={without?.answer} placeholder="No answer yet" />
           <div className="flex items-center gap-1.5 text-xs rounded border border-red-500/40 bg-red-500/10 text-red-300 px-2 py-1">
             {showWarningIcon && <XCircle className="h-3 w-3" />}
-            <span>Acting on unverified memory</span>
+            <span>Acting on unverified memory — may give wrong entitlements</span>
           </div>
         </div>
 

@@ -53,14 +53,14 @@ function RevokVerdict({
   score,
   signalCount,
   reVerified,
-  livePrice,
+  liveEntitlements,
   running,
 }: {
   status: ConfidenceStatus | null;
   score: number | null;
   signalCount: number;
   reVerified: boolean;
-  livePrice: number | null;
+  liveEntitlements: Record<string, unknown> | null;
   running: boolean;
 }) {
   if (running) {
@@ -122,12 +122,15 @@ function RevokVerdict({
         </div>
       )}
 
-      {status === "stale" && reVerified && livePrice !== null && (
+      {status === "stale" && reVerified && liveEntitlements !== null && (
         <div className="flex items-start gap-1.5 text-xs opacity-90">
           <Database className="h-3.5 w-3.5 shrink-0 mt-px" />
           <span>
             Memory stale — queried live database.{" "}
-            <span className="font-semibold">${livePrice.toFixed(0)}/mo</span> confirmed.
+            <span className="font-semibold">
+              {String((liveEntitlements as Record<string, unknown>).subscription_tier ?? "?")}
+            </span>{" "}
+            plan confirmed.
           </span>
         </div>
       )}
@@ -174,7 +177,7 @@ export function AgentComparison({ state, agUiState }: AgentComparisonProps) {
   const signalCount =
     withRevokData?.signal_count ?? state?.signal_count ?? 0;
   const reVerified = Boolean(withRevokData?.re_verified);
-  const livePrice = withRevokData?.live_price ?? null;
+  const liveEntitlements = (withRevokData?.live_entitlements as Record<string, unknown> | null | undefined) ?? null;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -210,8 +213,8 @@ export function AgentComparison({ state, agUiState }: AgentComparisonProps) {
         <div className="flex items-start gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2">
           <XCircle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-px" />
           <p className="text-xs text-red-300/80 leading-snug">
-            Trusts memory blindly — no check for stale data. Will give the
-            wrong price if the database changed.
+            Trusts memory blindly — no check for stale data. Will give
+            wrong entitlements if the subscription changed.
           </p>
         </div>
       </div>
@@ -249,7 +252,7 @@ export function AgentComparison({ state, agUiState }: AgentComparisonProps) {
             score={confidenceScore}
             signalCount={signalCount}
             reVerified={reVerified}
-            livePrice={livePrice}
+            liveEntitlements={liveEntitlements}
             running={running}
           />
         </div>

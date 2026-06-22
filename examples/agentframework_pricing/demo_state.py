@@ -20,7 +20,11 @@ _MAX_LOG_ENTRIES: int = 50
 
 #: Default / empty state.  Server resets to this on ``POST /actions/reset``.
 _DEFAULTS: dict[str, Any] = {
-    "db_price": None,
+    "db_subscription_tier": None,
+    "db_seat_limit": None,
+    "db_feature_entitlements": None,
+    "db_api_rate_limit": None,
+    "db_billing_terms": None,
     "db_updated_at": None,
     "memory_content": None,
     "memory_loading": False,
@@ -28,6 +32,7 @@ _DEFAULTS: dict[str, Any] = {
     "confidence_status": "unknown",
     "signal_count": 0,
     "last_signal_at": None,
+    "dependent_scores": {},
     "answer_without_revok": None,
     "answer_with_revok": None,
     "event_log": [],
@@ -35,7 +40,7 @@ _DEFAULTS: dict[str, Any] = {
         "questions": 0,
         "drift_caught": 0,
         "wrong_answers": 0,
-        "cost_saved": 0.0,
+        "support_escalations_prevented": 0,
     },
 }
 

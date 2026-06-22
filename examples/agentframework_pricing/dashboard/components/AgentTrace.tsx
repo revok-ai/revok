@@ -37,8 +37,8 @@ const TOOL_META: Record<string, ToolMeta> = {
     description: "Revok proxy",
     Icon: Shield,
   },
-  get_current_price: {
-    label: "Fetch Live Price",
+  get_current_entitlements: {
+    label: "Fetch Live Entitlements",
     description: "SQLite",
     Icon: Database,
   },
@@ -109,12 +109,16 @@ function ToolCallCard({ tc }: { tc: ToolCallRecord }) {
           <span className="text-[11px] text-slate-400">signals: {signals}</span>
         </div>
       );
-    } else if (tc.name === "get_current_price") {
-      const price = tc.customData.live_price as number | null;
+    } else if (tc.name === "get_current_entitlements") {
+      const tier = tc.customData.subscription_tier as string | null;
+      const seats = tc.customData.seat_limit as number | null;
       resultNode = (
-        <p className="mt-1 text-[11px] text-sky-300 font-medium">
-          Live: {price !== null && price !== undefined ? `$${price.toFixed(0)}/month` : "not found"}
-        </p>
+        <div className="mt-1 space-y-0.5">
+          <p className="text-[11px] text-sky-300 font-medium">
+            Tier: {tier ?? "unknown"}{seats !== null && seats !== undefined ? ` · ${seats} seats` : ""}
+          </p>
+          <p className="text-[10px] text-slate-500 italic">re-verified from database</p>
+        </div>
       );
     }
   }

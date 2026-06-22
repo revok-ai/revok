@@ -149,7 +149,7 @@ export function useAgUiRun() {
               const toolNameByEvent: Record<string, string> = {
                 memory_loaded: "check_memory",
                 revok_confidence: "get_revok_confidence",
-                db_reverified: "get_current_price",
+                db_reverified: "get_current_entitlements",
               };
               const targetTool = toolNameByEvent[event.name];
               if (targetTool) {
