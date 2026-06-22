@@ -1,5 +1,0 @@
-.env
-demo_state.json
-*.db
-__pycache__/
-*.py[cod]

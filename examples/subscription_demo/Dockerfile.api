@@ -21,10 +21,10 @@ RUN pip install --no-cache-dir \
     "networkx>=3.2,<4"
 
 # --- Demo app sources ---------------------------------------------------------
-COPY examples/agentframework_pricing/server.py ./
-COPY examples/agentframework_pricing/agent.py ./
-COPY examples/agentframework_pricing/database.py ./
-COPY examples/agentframework_pricing/demo_state.py ./
+COPY examples/subscription_demo/server.py ./
+COPY examples/subscription_demo/agent.py ./
+COPY examples/subscription_demo/database.py ./
+COPY examples/subscription_demo/demo_state.py ./
 
 ENV PYTHONPATH=/app \
     DEMO_PORT=8081
