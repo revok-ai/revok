@@ -33,8 +33,6 @@ MANIFEST
 *.spec
 
 # Spec Kit
-.specify/
-specs/
 
 # Installer logs
 pip-log.txt
@@ -205,7 +203,7 @@ cython_debug/
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
 #   and can be added to the global gitignore or merged into this file. However, if you prefer, 
 #   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+.vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
@@ -223,16 +221,16 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Next.js (examples/crewai_pricing/dashboard)
-examples/crewai_pricing/dashboard/.next/
-examples/crewai_pricing/dashboard/node_modules/
-examples/crewai_pricing/dashboard/.env.local
+# Next.js (examples/subscription_demo/dashboard)
+examples/subscription_demo/dashboard/.next/
+examples/subscription_demo/dashboard/node_modules/
+examples/subscription_demo/dashboard/.env.local
 
 # Demo runtime artifacts
-examples/crewai_pricing/pricing_demo.db
-examples/crewai_pricing/demo_state.json
+examples/subscription_demo/pricing_demo.db
+examples/subscription_demo/demo_state.json
 
 # Example runtime / generated files
 *.db
 demo_state.json
-TASKS.md
+/TASKS.md

@@ -7,16 +7,15 @@ __pycache__
 .mypy_cache
 .ruff_cache
 examples/
-# Re-include demo source files needed by Dockerfile.server builds
-!examples/crewai_pricing/server.py
-!examples/crewai_pricing/agent.py
-!examples/crewai_pricing/database.py
-!examples/crewai_pricing/demo_state.py
-!examples/langgraph_pricing/server.py
-!examples/langgraph_pricing/agent.py
-!examples/langgraph_pricing/database.py
-!examples/langgraph_pricing/demo_state.py
+# Re-include demo source files needed by Dockerfile.api build
+!examples/subscription_demo/server.py
+!examples/subscription_demo/agent.py
+!examples/subscription_demo/database.py
+!examples/subscription_demo/demo_state.py
 tests/
 *.md
 .gitignore
 TASKS.md
+.env*
+*.log*
+coverage/

@@ -22,7 +22,7 @@ from revok.config import (
 )
 from revok.entity_matcher import EntityMatcher
 from revok.adapters import Mem0Adapter
-from revok.proxy import build_app
+from revok.proxy import SIGNAL_PROCESSOR_TASK_KEY, build_app
 from revok.scoring import ScoringEngine
 from revok.state_store import SqliteStateStore
 
@@ -574,7 +574,7 @@ async def test_signal_endpoint_returns_202(tmp_path: Path) -> None:
 
 
 async def test_signal_endpoint_published_to_queue(tmp_path: Path) -> None:
-    """POST /signals publishes a Signal to the bus; enrich() is never called."""
+    """POST /signals is consumed asynchronously and updates root entity state."""
     import asyncio
 
     from revok.signal_queue import AsyncioQueueBus
@@ -598,11 +598,16 @@ async def test_signal_endpoint_published_to_queue(tmp_path: Path) -> None:
                     "payload": {},
                 },
             )
-        # Bus must have received exactly one signal
-        signal = await asyncio.wait_for(bus.consume(), timeout=1.0)
-        assert "redis-enterprise-pricing" in signal.raw_content
-        assert signal.source_id == "webhook"
-        assert signal.http_path == "/signals"
+
+            # Consumer may drain the queue immediately; assert persisted side-effect
+            # before the client context exits and on_cleanup cancels the task.
+            record = None
+            for _ in range(20):
+                record = await store.get("redis-enterprise-pricing")
+                if record is not None:
+                    break
+                await asyncio.sleep(0.05)
+            assert record is not None
     finally:
         await store.close()
         await bus.close()
@@ -721,4 +726,153 @@ async def test_get_entity_response_excludes_last_value_fingerprint(
             body = await resp.json()
             assert "last_value_fingerprint" not in body
     finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Signal consumer lifecycle integration
+# ---------------------------------------------------------------------------
+
+
+async def test_consumer_task_created_on_startup(tmp_path: Path) -> None:
+    """build_app starts signal processor task via app.on_startup."""
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({"result": "ok"}, status=200)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(app)):
+                task = app.get(SIGNAL_PROCESSOR_TASK_KEY)
+                assert task is not None
+                assert not task.done()
+        finally:
+            await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Trailing-slash path preservation — regression tests
+# ---------------------------------------------------------------------------
+
+
+async def test_write_trailing_slash_forwarded_intact(tmp_path: Path) -> None:
+    """POST /v1/memories/ (WITH trailing slash) reaches upstream with the slash preserved.
+
+    Mem0Adapter.write() builds the upstream URL as
+    ``config.url.rstrip('/') + http_path``.  ``http_path`` comes from
+    ``str(request.rel_url)`` in the proxy handler and must never be
+    normalised — trailing slashes must be forwarded verbatim so upstreams
+    that require them (e.g. Redis AMS ``/v1/long-term-memory/``) succeed.
+    """
+    received_paths: list[str] = []
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        received_paths.append(request.path)
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.post(
+                    "/v1/memories/",
+                    json={"content": "Alice visited the lab"},
+                )
+                assert resp.status == 201
+        finally:
+            await store.close()
+
+    assert len(received_paths) == 1
+    assert received_paths[0] == "/v1/memories/", (
+        f"Expected '/v1/memories/' forwarded to upstream; got '{received_paths[0]}'"
+    )
+
+
+async def test_write_no_trailing_slash_not_added(tmp_path: Path) -> None:
+    """POST /v1/memories (NO trailing slash) is forwarded without a slash being added.
+
+    This is the inverse of ``test_write_trailing_slash_forwarded_intact``: the
+    proxy must not normalise paths in either direction — no slash removal AND
+    no slash addition.
+    """
+    received_paths: list[str] = []
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        received_paths.append(request.path)
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.post(
+                    "/v1/memories",
+                    json={"content": "Alice visited the lab"},
+                )
+                assert resp.status == 201
+        finally:
+            await store.close()
+
+    assert len(received_paths) == 1
+    assert received_paths[0] == "/v1/memories", (
+        f"Expected '/v1/memories' (no trailing slash) forwarded; got '{received_paths[0]}'"
+    )
+
+
+async def test_consumer_task_cancelled_on_cleanup(tmp_path: Path) -> None:
+    """Signal processor task is cancelled during app cleanup."""
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({"result": "ok"}, status=200)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        app = build_app(config, store, matcher, scorer)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        await client.close()
+
+        task = app.get(SIGNAL_PROCESSOR_TASK_KEY)
+        assert task is not None
+        assert task.done()
         await store.close()

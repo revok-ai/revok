@@ -1,0 +1,35 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# --- Install the revok package ------------------------------------------------
+COPY pyproject.toml ./
+COPY revok/ ./revok/
+
+# --- Install demo + runtime dependencies --------------------------------------
+RUN pip install --no-cache-dir \
+    "agent-framework" \
+    "agent-framework-devui" \
+    "azure-identity>=1.16,<2" \
+    "fastapi>=0.110,<1" \
+    "uvicorn[standard]>=0.27,<1" \
+    "aiohttp>=3.9,<4" \
+    "aiosqlite>=0.20,<1" \
+    "python-dotenv>=1.0,<2" \
+    "pyyaml>=6.0,<7" \
+    "pydantic>=2.5,<3" \
+    "networkx>=3.2,<4"
+
+# --- Demo app sources ---------------------------------------------------------
+COPY examples/subscription_demo/server.py ./
+COPY examples/subscription_demo/agent.py ./
+COPY examples/subscription_demo/database.py ./
+COPY examples/subscription_demo/demo_state.py ./
+
+ENV PYTHONPATH=/app \
+    DEMO_PORT=8081
+
+EXPOSE 8081
+EXPOSE 8082
+
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8081"]

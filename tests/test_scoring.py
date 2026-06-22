@@ -22,7 +22,7 @@ no new signals arrive.
 
 import pytest
 
-from revok.config import ScoringConfig
+from revok.config import ScoringConfig, SignalPressureConfig
 from revok.models import EntityRecord
 from revok.scoring import ScoringEngine
 
@@ -335,3 +335,32 @@ def test_score_existing_calls_unchanged_without_keyword(c_engine):
     existing = make_contradictable_record("500.0", valid_time=1000.0)
     result = c_engine.score(existing, now=1000.0)
     assert result == pytest.approx(existing.score - SIGNAL_STRENGTH)
+
+
+def test_score_with_pressure_scales_signal_strength(engine):
+    score = engine.score_with_pressure(None, now=0.0, pressure=0.5)
+    # score_cap - (signal_strength * pressure) = 1.0 - 0.15
+    assert score == pytest.approx(0.85)
+
+
+def test_score_with_pressure_clamps_out_of_range(engine):
+    score_low = engine.score_with_pressure(None, now=0.0, pressure=-1.0)
+    score_high = engine.score_with_pressure(None, now=0.0, pressure=5.0)
+    assert score_low == pytest.approx(1.0)
+    assert score_high == pytest.approx(1.0 - SIGNAL_STRENGTH)
+
+
+def test_pressure_for_severity_uses_mapping_and_default():
+    engine = ScoringEngine(
+        ScoringConfig(
+            half_life_seconds=HALF_LIFE,
+            signal_strength=SIGNAL_STRENGTH,
+            score_cap=SCORE_CAP,
+            signal_pressure=SignalPressureConfig(
+                severity_weights={"low": 0.2, "medium": 0.4, "high": 0.7},
+                default_severity="medium",
+            ),
+        )
+    )
+    assert engine.pressure_for_severity("high") == pytest.approx(0.7)
+    assert engine.pressure_for_severity("unknown") == pytest.approx(0.4)

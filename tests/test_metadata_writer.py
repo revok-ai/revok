@@ -152,6 +152,20 @@ async def test_enriched_payload_upstream_dict_contains_x_revok(matcher, scorer, 
     assert len(upstream["x_revok"]["entities"]) == 1
 
 
+async def test_write_enrichment_preserves_original_payload_shape(matcher, scorer, store):
+    """Regression: write-enrichment only appends x_revok and preserves existing keys."""
+    body = b'{"content":"Alice update","metadata":{"source":"crm"},"tags":["a","b"]}'
+    signal = make_signal("Alice update", body=body)
+
+    payload = await enrich(signal, matcher, scorer, store)
+    upstream = payload.to_upstream_dict()
+
+    assert upstream["content"] == "Alice update"
+    assert upstream["metadata"] == {"source": "crm"}
+    assert upstream["tags"] == ["a", "b"]
+    assert "x_revok" in upstream
+
+
 async def test_header_tagged_entity_bypasses_text_matching(scorer, store):
     """X-Revok-Entity header takes priority; text matching is skipped entirely."""
     # Matcher configured for "Alice" — the signal content also mentions Alice,

@@ -7,6 +7,30 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.0] — 2026-06-21
+
+### Added
+- Signal-driven causal propagation worker (`revok/signal_processor.py`) with async consumer loop, bounded processing timeout, and error-isolation semantics.
+- `GraphBackend` protocol and concrete weighted propagation in `revok/causal_graph.py`.
+- Bounded BFS causal propagation with cycle safety, max-pressure aggregation, hop-limit cutoff, and min-pressure pruning.
+- New config sections for causal propagation and severity mapping:
+  - `causal_graph` (`enabled`, `max_hops`, `min_pressure`, `attenuation`, `processing_timeout_seconds`, `relationships`)
+  - `scoring.signal_pressure` (`severity_weights`, `default_severity`)
+- Proxy lifecycle integration: consumer starts on app startup and is cancelled on cleanup.
+- Expanded test coverage for causal propagation, signal processing, proxy lifecycle, and config/scoring validation.
+- `Mem0Adapter` write-path boundary-matching fix — replaced naive `path.startswith()` with boundary-aware matching (exact match or prefix + `"/"`) plus a new opt-in `UpstreamConfig.read_subpaths` field for excluding known read sub-resources (e.g. `"search"`) that share a write path prefix with a write endpoint. Default `[]` preserves existing behavior for all prior configs.
+- `Mem0Adapter` trailing-slash preservation fix — write forwarding now preserves the caller's exact path including trailing slash, fixing 405 errors against upstreams (e.g. Redis Agent Memory Server) that require a trailing slash on write endpoints. Regression tests pin both directions.
+- New flagship example demo (`examples/subscription_demo/`) — Microsoft AgentFramework customer success agent backed by Redis Agent Memory Server and Azure Managed Redis. Demonstrates a SaaS subscription/entitlement cascade: a plan-tier change degrades the root entity and propagates via causal graph BFS to four dependent entitlement facts (seat limit, feature entitlements, API rate limit, billing terms). Includes a write-back correction tool so confidence recovery reflects genuinely corrected memory, not just elapsed time.
+
+### Changed
+- `POST /signals` is now consumed by a background processor that updates root entities and optional downstream causal relationships.
+- `CausalGraph.add_relation()` now accepts weighted edges (`weight` in `(0,1]`).
+- Example configs updated to include causal graph and signal pressure mapping blocks.
+- Consolidated to a single flagship example demo. Removed `examples/crewai_pricing/` and `examples/langgraph_pricing/` (redundant parallel demos of the same scenario across three agent frameworks); added an "Integration Examples" section to `README.md` with minimal CrewAI/LangGraph/generic config snippets instead.
+- Roadmap table clarified: Agent Memory Server support ships via Revok's generic adapter config (`read_subpaths` exclusion) rather than a dedicated adapter for v0.3.0; a dedicated `RedisAmsAdapter` remains planned for a future release.
+
+---
+
 ## [0.2.0] — 2026-06-11
 
 ### Added
@@ -170,4 +194,7 @@ scaffold, and the Mem0 memory adapter.
 
 ---
 
-[0.1.0]: https://github.com/robertopc1/revok/releases/tag/v0.1.0
+[0.3.0]: https://github.com/revok-ai/revok/releases/tag/v0.3.0
+[0.2.0]: https://github.com/revok-ai/revok/releases/tag/v0.2.0
+[0.1.1]: https://github.com/revok-ai/revok/releases/tag/v0.1.1
+[0.1.0]: https://github.com/revok-ai/revok/releases/tag/v0.1.0
