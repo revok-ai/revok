@@ -308,7 +308,7 @@ async def store_corrected_memory(
                 "deduplicate": False,
             }
             async with session.post(
-                f"{revok_url}/v1/long-term-memory",
+                f"{revok_url}/v1/long-term-memory/",
                 json=payload,
                 headers={"X-Revok-Entity": "subscription-tier"},
                 timeout=aiohttp.ClientTimeout(total=15),

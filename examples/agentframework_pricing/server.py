@@ -443,7 +443,7 @@ async def fire_signal() -> JSONResponse:
         revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{revok_url}/v1/long-term-memory",
+                f"{revok_url}/v1/long-term-memory/",
                 json={
                     "memories": [
                         {
