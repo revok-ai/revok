@@ -761,6 +761,95 @@ async def test_consumer_task_created_on_startup(tmp_path: Path) -> None:
             await store.close()
 
 
+# ---------------------------------------------------------------------------
+# Trailing-slash path preservation — regression tests
+# ---------------------------------------------------------------------------
+
+
+async def test_write_trailing_slash_forwarded_intact(tmp_path: Path) -> None:
+    """POST /v1/memories/ (WITH trailing slash) reaches upstream with the slash preserved.
+
+    Mem0Adapter.write() builds the upstream URL as
+    ``config.url.rstrip('/') + http_path``.  ``http_path`` comes from
+    ``str(request.rel_url)`` in the proxy handler and must never be
+    normalised — trailing slashes must be forwarded verbatim so upstreams
+    that require them (e.g. Redis AMS ``/v1/long-term-memory/``) succeed.
+    """
+    received_paths: list[str] = []
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        received_paths.append(request.path)
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.post(
+                    "/v1/memories/",
+                    json={"content": "Alice visited the lab"},
+                )
+                assert resp.status == 201
+        finally:
+            await store.close()
+
+    assert len(received_paths) == 1
+    assert received_paths[0] == "/v1/memories/", (
+        f"Expected '/v1/memories/' forwarded to upstream; got '{received_paths[0]}'"
+    )
+
+
+async def test_write_no_trailing_slash_not_added(tmp_path: Path) -> None:
+    """POST /v1/memories (NO trailing slash) is forwarded without a slash being added.
+
+    This is the inverse of ``test_write_trailing_slash_forwarded_intact``: the
+    proxy must not normalise paths in either direction — no slash removal AND
+    no slash addition.
+    """
+    received_paths: list[str] = []
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        received_paths.append(request.path)
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.post(
+                    "/v1/memories",
+                    json={"content": "Alice visited the lab"},
+                )
+                assert resp.status == 201
+        finally:
+            await store.close()
+
+    assert len(received_paths) == 1
+    assert received_paths[0] == "/v1/memories", (
+        f"Expected '/v1/memories' (no trailing slash) forwarded; got '{received_paths[0]}'"
+    )
+
+
 async def test_consumer_task_cancelled_on_cleanup(tmp_path: Path) -> None:
     """Signal processor task is cancelled during app cleanup."""
 
