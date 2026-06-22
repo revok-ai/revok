@@ -530,7 +530,12 @@ check is a single explicit call you make only when you need it.
 |---------------------|-------------|
 | Mem0                | ✅ v0.1.0   |
 | Zep                 | ✅ v0.2.0   |
-| Agent Memory Server | 🔜 v0.3.0   |
+| Agent Memory Server | ✅ v0.3.0 (via generic adapter config)* |
+
+\* Redis Agent Memory Server is supported via Revok's generic upstream config
+(`read_subpaths` exclusion for sub-resource paths) rather than a dedicated adapter.
+A dedicated `RedisAmsAdapter` — mirroring `ZepAdapter`'s path-pattern matching —
+is planned for a future release if usage reveals additional API-shape mismatches.
 
 **Signal sources**
 
