@@ -1,4 +1,4 @@
-name: revok-agentframework-pricing-demo
+name: revok-subscription-demo
 
 services:
   redis-ams:
@@ -41,7 +41,7 @@ services:
   api:
     build:
       context: ../..
-      dockerfile: examples/agentframework_pricing/Dockerfile.api
+      dockerfile: examples/subscription_demo/Dockerfile.api
     ports:
       - "${API_PORT:-8081}:8081"
       - "${DEVUI_PORT:-8082}:8082"

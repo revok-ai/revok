@@ -1,4 +1,4 @@
-"""SQLite subscription state database for the agentframework_pricing demo.
+"""SQLite subscription state database for the subscription_demo demo.
 
 Stores the current subscription profile for one customer account.
 All column names and seed values are configurable via environment variables.

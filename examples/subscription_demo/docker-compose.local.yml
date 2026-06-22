@@ -6,4 +6,4 @@ services:
     image: ""  # clear the hub image
     build:
       context: ../..
-      dockerfile: examples/crewai_pricing/Dockerfile.revok
+      dockerfile: examples/subscription_demo/Dockerfile.revok

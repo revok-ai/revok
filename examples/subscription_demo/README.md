@@ -200,7 +200,7 @@ descriptions — standard OpenAI function calling.
 ## File Structure
 
 ```
-agentframework_pricing/
+subscription_demo/
 ├── agent.py          # AgentFramework customer success agent (tool-use loop)
 ├── server.py         # FastAPI API server
 ├── database.py       # SQLite subscription state DB
@@ -381,7 +381,7 @@ not wired through a graph compiler.
 ## File Structure
 
 ```
-agentframework_pricing/
+subscription_demo/
 ├── agent.py          # AgentFramework sales agent (tool-use loop)
 ├── server.py         # FastAPI API server
 ├── database.py       # SQLite product pricing DB
