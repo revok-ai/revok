@@ -497,7 +497,9 @@ def entitlement_node(state: dict) -> dict:
 
 ### Any framework (generic pattern)
 
-The minimal integration — works with Mem0, Zep, or any adapter Revok supports:
+The minimal integration — the only constant is the `X-Revok-Entity` header;
+the write endpoint depends on the adapter you proxy (e.g. `/v1/memories` for
+Mem0, `/api/data` for Zep):
 
 ```python
 import requests
@@ -506,6 +508,7 @@ import requests
 #    mem0 = MemoryClient(host="http://revok-host:8080")  # no other change needed
 
 # 2. On writes, tag the entity Revok should track
+#    Use the write path your adapter exposes (shown here: Mem0's /v1/memories)
 headers = {"X-Revok-Entity": "subscription-tier"}
 requests.post("http://revok-host:8080/v1/memories", json=payload, headers=headers)
 
@@ -514,8 +517,8 @@ r = requests.get("http://revok-host:8080/v1/entities/subscription-tier")
 status = r.json()["confidence_status"]  # "fresh" | "degraded" | "stale"
 ```
 
-Reads bypass Revok entirely — the confidence check is a single explicit call you
-make only when you need it.
+Reads to the upstream store are forwarded unchanged by Revok — the confidence
+check is a single explicit call you make only when you need it.
 
 ---
 
