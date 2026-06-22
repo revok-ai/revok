@@ -580,8 +580,8 @@ async def ask_agent(body: AskAgentRequest | None = Body(default=None)) -> JSONRe
             ),
         )
 
-        if ans_without.memory_quote:
-            _demo_state["memory_content"] = ans_without.memory_quote
+        if ans_with.memory_quote:
+            _demo_state["memory_content"] = ans_with.memory_quote
 
         without_mode = "re-verified" if ans_without.re_verified else "from memory"
         state_module.add_event(
@@ -894,8 +894,6 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
             )
 
         if ans_without:
-            if ans_without.memory_quote:
-                _demo_state["memory_content"] = ans_without.memory_quote
             _demo_state["answer_without_revok"] = {
                 "answer": ans_without.answer,
                 "memory_quote": ans_without.memory_quote,
@@ -907,6 +905,14 @@ async def agent_run(body: RunRequest) -> StreamingResponse:
                 f"Without Revok answered: {ans_without.answer[:80]}",
                 kind="answer",
             )
+
+        # Update memory panel from with-revok AMS state (reflects post-correction reality)
+        try:
+            with_revok_mems = await _with_revok.check_memory_tool(None)
+            if with_revok_mems:
+                _demo_state["memory_content"] = with_revok_mems[0]["text"]
+        except Exception as _exc:
+            _log.warning("AG-UI: with-revok memory quote fetch failed: %s", _exc)
 
         stats: dict = _demo_state.setdefault(
             "session_stats",
