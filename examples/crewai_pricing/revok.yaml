@@ -56,7 +56,10 @@ scoring:
   # half_life_seconds: time for confidence to decay to 0.5 after a signal
   # 43200 = 12 hours  |  600 = 10 min for demos  |  120 = 2 min  |  30 = very fast
   half_life_seconds: 90
-  signal_strength: 0.8
+  # signal_strength: how much each signal subtracts from the score.
+  # 0.4 means: fresh(1.0) -> 1 signal -> 0.6 (degraded) -> 2 signals -> 0.2 (stale)
+  # This lets the demo show the full fresh -> degraded -> stale progression.
+  signal_strength: 0.4
   score_cap: 1.0
   # Flag a contradiction when two conflicting prices arrive within this window.
   contradiction_window_seconds: 300

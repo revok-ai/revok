@@ -9,6 +9,7 @@ export interface ProductEntry {
   confidence_score: number | null;
   confidence_status: ConfidenceStatus;
   signal_count: number;
+  last_signal_at: number | null;
 }
 
 export interface EventLogEntry {

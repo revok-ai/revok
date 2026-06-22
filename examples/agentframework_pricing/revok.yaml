@@ -1,0 +1,110 @@
+server:
+  host: "0.0.0.0"
+  port: 7771
+  startup_timeout_seconds: 10
+  max_signal_size_bytes: 1048576
+
+upstream:
+  url: "http://redis-ams:8000"
+  write_methods:
+    - "POST"
+    - "PUT"
+    - "PATCH"
+  write_paths:
+    - "/v1/long-term-memory"
+  read_subpaths:
+    - "search"
+
+# ---------------------------------------------------------------------------
+# entity_matcher (alias catalog — optional when callers send X-Revok-Entity)
+# ---------------------------------------------------------------------------
+# The  X-Revok-Entity: <id>  request header always takes priority over text
+# matching.  The catalog below is the fallback and doubles as documentation
+# of every entity the demo uses.
+entity_matcher:
+  entities:
+    - id: "subscription-tier"
+      display_name: "Subscription Tier"
+      aliases:
+        - "subscription tier"
+        - "plan"
+        - "subscription plan"
+    - id: "seat-limit"
+      display_name: "Seat Limit"
+      aliases:
+        - "seat limit"
+        - "seats"
+        - "user limit"
+        - "seat count"
+    - id: "feature-entitlements"
+      display_name: "Feature Entitlements"
+      aliases:
+        - "feature access"
+        - "features"
+        - "entitlements"
+        - "advanced features"
+    - id: "api-rate-limit"
+      display_name: "API Rate Limit"
+      aliases:
+        - "API rate limit"
+        - "rate limit"
+        - "API quota"
+        - "requests per month"
+    - id: "billing-terms"
+      display_name: "Billing Terms"
+      aliases:
+        - "billing terms"
+        - "contract terms"
+        - "locked-in rate"
+        - "renewal terms"
+
+causal_graph:
+  enabled: true
+  max_hops: 2
+  min_pressure: 0.05
+  attenuation: 0.6
+  relationships:
+    - source: subscription-tier
+      target: seat-limit
+      weight: 0.9
+    - source: subscription-tier
+      target: feature-entitlements
+      weight: 0.9
+    - source: subscription-tier
+      target: api-rate-limit
+      weight: 0.8
+    - source: subscription-tier
+      target: billing-terms
+      weight: 0.7
+
+scoring:
+  # half_life_seconds: time for confidence to recover to 0.5 after a signal.
+  # 43200 = 12 hours  |  600 = 10 min for demos  |  120 = 2 min  |  30 = very fast
+  half_life_seconds: 300
+  # signal_strength: how much each signal subtracts from the score.
+  # 0.4 means: fresh(1.0) → 1 signal → 0.6 (degraded) → 2 signals → 0.2 (stale)
+  # This lets the demo show the full fresh → degraded → stale progression.
+  signal_strength: 0.4
+  score_cap: 1.0
+  # Flag a contradiction when two conflicting prices arrive within this window.
+  contradiction_window_seconds: 300
+  contradiction_penalty: 0.15
+  # Severity → pressure mapping.
+  # Without this, all signals fall back to 0.3 — too weak to propagate to dependents.
+  # high=1.0 means: root drops by signal_strength*1.0=0.4 per fire;
+  # dependents drop by 0.4 × (weight × attenuation) per fire, showing a real cascade.
+  signal_pressure:
+    default_severity: medium
+    severity_weights:
+      low: 0.3
+      medium: 0.6
+      high: 1.0
+      critical: 1.0
+
+state_store:
+  sqlite_path: "/tmp/revok_agentframework_demo.db"
+  hot_layer_max_entries: 1000
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s %(name)s %(levelname)s %(message)s"
