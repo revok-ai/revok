@@ -39,7 +39,7 @@ from revok.adapters import AdapterClass, _REGISTRY, build_adapter
 from revok.causal_graph import CausalGraph
 from revok.config import Config
 from revok.entity_matcher import EntityMatcher
-from revok.interfaces import StateStore
+from revok.interfaces import GraphBackend, StateStore
 from revok.metadata_writer import enrich
 from revok.models import Signal
 from revok.scoring import ScoringEngine
@@ -107,7 +107,7 @@ def build_app(
     adapter_cls: AdapterClass = _REGISTRY[config.adapter_type]
 
     _bus = bus if bus is not None else AsyncioQueueBus()
-    graph = CausalGraph()
+    graph: GraphBackend = CausalGraph()
     for rel in config.causal_graph.relationships:
         graph.add_relation(rel.source, rel.target, rel.weight)
     processor = SignalProcessor(_bus, store, scorer, graph, config.causal_graph)
