@@ -183,3 +183,107 @@ class MemoryAdapterResponse:
     body: bytes
     headers: dict[str, str]
     is_error: bool
+
+
+# ---------------------------------------------------------------------------
+# Inspector dataclasses (Feature 006)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CausalNeighbor:
+    """A direct causal neighbor of an inspected entity.
+
+    Attributes:
+        entity_key: Normalized identifier of the neighbor entity.
+        direction: ``"upstream"`` (predecessor) or ``"downstream"`` (successor).
+        weight: Edge weight on the causal relation ``(0, 1]``.
+        score: Current score of the neighbor entity, or ``None`` if not in store.
+    """
+
+    entity_key: str
+    direction: str  # Literal["upstream", "downstream"]
+    weight: float
+    score: float | None
+
+
+@dataclass(frozen=True)
+class InspectionReport:
+    """Snapshot of an entity's state and its direct causal neighborhood.
+
+    Attributes:
+        entity_key: Normalized entity identifier.
+        score: Current confidence score.
+        valid_time: Unix epoch seconds of the most recent signal event.
+        transaction_time: Unix epoch seconds when the record was written.
+        signal_count: Total number of signals referencing this entity.
+        contradiction_count: Total number of contradiction events detected.
+        upstream: Direct predecessors in the causal graph.
+        downstream: Direct successors in the causal graph.
+        inspected_at: Unix epoch timestamp when this snapshot was generated.
+    """
+
+    entity_key: str
+    score: float
+    valid_time: float
+    transaction_time: float
+    signal_count: int
+    contradiction_count: int
+    upstream: list[CausalNeighbor]
+    downstream: list[CausalNeighbor]
+    inspected_at: float
+
+
+@dataclass(frozen=True)
+class DownstreamEntity:
+    """An entity reachable from a root via forward causal propagation.
+
+    Attributes:
+        entity_key: Normalized entity identifier.
+        pressure: Maximum attenuated pressure received at this entity.
+        hops: Number of causal hops from the root entity.
+    """
+
+    entity_key: str
+    pressure: float
+    hops: int
+
+
+@dataclass(frozen=True)
+class PropagationPath:
+    """One complete path from a root to a target entity through the causal graph.
+
+    Attributes:
+        hops: Ordered list of entity keys from root (index 0) to target (last).
+        pressures: Attenuated pressure at each hop; ``pressures[0] == 1.0`` at the root.
+        is_dominant: ``True`` if this path carries the highest terminal pressure.
+    """
+
+    hops: list[str]
+    pressures: list[float]
+    is_dominant: bool
+
+
+@dataclass(frozen=True)
+class SignalRecord:
+    """A recorded signal event for an entity, stored in the signal history log.
+
+    Attributes:
+        id: Auto-assigned SQLite row id; ``None`` before persistence.
+        entity_key: Normalized entity identifier that received the signal.
+        source_id: Identifier of the originating agent or signal source.
+        processed_at: Unix epoch seconds when the signal was processed.
+        score_before: Entity score before the signal was applied; ``None`` for new entities.
+        score_after: Entity score after the signal was applied.
+        is_propagated: ``True`` when this event was created by causal propagation.
+        upstream_source: Key of the root entity that triggered propagation; ``None`` for direct signals.
+    """
+
+    id: int | None
+    entity_key: str
+    source_id: str
+    processed_at: float
+    score_before: float | None
+    score_after: float
+    is_propagated: bool
+    upstream_source: str | None

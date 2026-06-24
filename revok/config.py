@@ -234,6 +234,25 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class InspectorConfig:
+    """Inspector API configuration.
+
+    Attributes:
+        enabled: Enables the Inspector read API endpoints.
+        signal_history_enabled: Enables SQLite-backed signal event history.
+        signal_history_max_rows: Maximum number of signal events retained per entity.
+            Oldest rows are deleted automatically after each insert. Must be > 0.
+        max_paths: Maximum number of propagation paths returned by the ``/paths`` endpoint.
+            Must be > 0.
+    """
+
+    enabled: bool = True
+    signal_history_enabled: bool = True
+    signal_history_max_rows: int = 10_000
+    max_paths: int = 100
+
+
+@dataclass(frozen=True)
 class Config:
     """Root configuration object. Loaded once at startup; immutable thereafter.
 
@@ -254,6 +273,7 @@ class Config:
     logging: LoggingConfig
     adapter_type: str = "mem0"
     causal_graph: CausalGraphConfig = field(default_factory=CausalGraphConfig)
+    inspector: InspectorConfig = field(default_factory=InspectorConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +611,28 @@ def load_config(path: str) -> Config:
 
     logging_cfg = LoggingConfig(level=str(level), format=str(fmt))
 
+    # --- inspector (optional) ---
+    insp_raw = data.get("inspector") or {}
+    if not isinstance(insp_raw, dict):
+        raise ConfigError("inspector must be a mapping when provided.")
+
+    insp_enabled = bool(insp_raw.get("enabled", True))
+    insp_history_enabled = bool(insp_raw.get("signal_history_enabled", True))
+    insp_history_max_rows = insp_raw.get("signal_history_max_rows", 10_000)
+    insp_max_paths = insp_raw.get("max_paths", 100)
+
+    if not isinstance(insp_history_max_rows, int) or insp_history_max_rows <= 0:
+        raise ConfigError("inspector.signal_history_max_rows must be a positive integer.")
+    if not isinstance(insp_max_paths, int) or insp_max_paths <= 0:
+        raise ConfigError("inspector.max_paths must be a positive integer.")
+
+    inspector_cfg = InspectorConfig(
+        enabled=insp_enabled,
+        signal_history_enabled=insp_history_enabled,
+        signal_history_max_rows=int(insp_history_max_rows),
+        max_paths=int(insp_max_paths),
+    )
+
     return Config(
         server=server_cfg,
         upstream=upstream_cfg,
@@ -600,4 +642,5 @@ def load_config(path: str) -> Config:
         logging=logging_cfg,
         adapter_type=adapter_type,
         causal_graph=causal_graph_cfg,
+        inspector=inspector_cfg,
     )

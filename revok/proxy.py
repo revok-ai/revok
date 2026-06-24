@@ -39,6 +39,7 @@ from revok.adapters import AdapterClass, _REGISTRY, build_adapter
 from revok.causal_graph import CausalGraph
 from revok.config import Config
 from revok.entity_matcher import EntityMatcher
+from revok.inspector import EntityNotFoundError, RevokInspector
 from revok.interfaces import GraphBackend, StateStore
 from revok.metadata_writer import enrich
 from revok.models import Signal
@@ -111,6 +112,7 @@ def build_app(
     for rel in config.causal_graph.relationships:
         graph.add_relation(rel.source, rel.target, rel.weight)
     processor = SignalProcessor(_bus, store, scorer, graph, config.causal_graph)
+    inspector = RevokInspector(store, graph, None)  # history injected in T014
 
     async def _handle_get_entity(
         request: aiohttp.web.Request,
