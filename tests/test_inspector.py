@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
 
 from revok.causal_graph import CausalGraph
 from revok.inspector import EntityNotFoundError, RevokInspector
@@ -446,7 +445,6 @@ class TestFullExplainabilityScenario:
     async def test_full_inspector_round_trip(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         import json
         import time as time_mod
-        from pathlib import Path
 
         from revok.config import CausalGraphConfig, ScoringConfig, SignalPressureConfig, StateStoreConfig
         from revok.models import Signal
@@ -617,7 +615,7 @@ class TestPerformanceSC003:
             for src in layer:
                 for tgt in next_layer[:5]:
                     graph.add_relation(src, tgt, weight=0.9)
-        return graph, layers[0][0], layers[-1][-1]
+        return graph, layers[0][0], layers[-1][0]
 
     @pytest.mark.asyncio
     async def test_get_downstream_completes_within_budget(self) -> None:
@@ -648,6 +646,7 @@ class TestPerformanceSC003:
         )
         elapsed = time.perf_counter() - start
 
+        assert len(result) > 0, "expected paths in layered graph"
         assert elapsed < 1.0, f"get_paths on ~100-node graph took {elapsed:.3f}s; budget 1.0s (SC-003)"
 
     @pytest.mark.asyncio
@@ -681,4 +680,5 @@ class TestPerformanceSC003:
         )
         elapsed = time.perf_counter() - start
 
+        assert len(result) > 0, "expected paths in 500-edge graph"
         assert elapsed < 0.200, f"get_paths on 100-node/500-edge graph took {elapsed:.3f}s; budget 200ms (SC-003)"
