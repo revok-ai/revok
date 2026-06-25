@@ -49,10 +49,12 @@ class SqliteSignalHistoryStore:
 
     Args:
         db_path: Path to the SQLite database file (shared with the WAL store).
+        max_rows: Maximum number of rows to retain per entity.
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, max_rows: int = 10_000) -> None:
         self._db_path = db_path
+        self._max_rows = max_rows
         self._conn: aiosqlite.Connection | None = None
 
     async def open(self) -> None:
@@ -86,6 +88,7 @@ class SqliteSignalHistoryStore:
             ),
         )
         await self._conn.commit()
+        await self.trim_for_entity(event.entity_key, self._max_rows)
 
     async def get_for_entity(self, entity_key: str) -> list[SignalRecord]:
         """Return all signal records for *entity_key* ordered by recency.
@@ -113,6 +116,29 @@ class SqliteSignalHistoryStore:
             )
             for row in rows
         ]
+
+    async def trim_for_entity(self, entity_key: str, max_rows: int) -> None:
+        """Trim history for *entity_key* to the newest *max_rows* entries."""
+        if self._conn is None:
+            raise RuntimeError("SqliteSignalHistoryStore is not open")
+        if max_rows <= 0:
+            raise ValueError("max_rows must be greater than 0")
+
+        await self._conn.execute(
+            """
+DELETE FROM signal_history
+WHERE id NOT IN (
+    SELECT id
+    FROM signal_history
+    WHERE entity_key = ?
+    ORDER BY processed_at DESC, id DESC
+    LIMIT ?
+)
+AND entity_key = ?
+""",
+            (entity_key, max_rows, entity_key),
+        )
+        await self._conn.commit()
 
     async def close(self) -> None:
         """Flush and close the database connection.  Idempotent."""

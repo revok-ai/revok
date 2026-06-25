@@ -194,7 +194,78 @@ class MemoryAdapter(Protocol):
 
 
 @runtime_checkable
-class GraphBackend(Protocol):
+class GraphReader(Protocol):
+    """Read-only structural introspection of the causal graph.
+
+    Implementations MUST be synchronous (graph is in-memory).
+    Returns empty collections for unknown nodes — never raises for absent nodes.
+    """
+
+    def has_node(self, entity_id: str) -> bool:
+        """Return ``True`` if the entity key exists in the graph.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            ``True`` if the node is present, ``False`` otherwise.
+        """
+        ...
+
+    def successors(self, entity_id: str) -> list[str]:
+        """Return the direct successors (downstream neighbors) of an entity.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            List of successor entity keys, or ``[]`` for unknown nodes.
+        """
+        ...
+
+    def predecessors(self, entity_id: str) -> list[str]:
+        """Return the direct predecessors (upstream neighbors) of an entity.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            List of predecessor entity keys, or ``[]`` for unknown nodes.
+        """
+        ...
+
+    def edge_weight(self, source_id: str, target_id: str) -> float:
+        """Return the weight of the directed edge from *source_id* to *target_id*.
+
+        Args:
+            source_id: Normalized source entity identifier.
+            target_id: Normalized target entity identifier.
+
+        Returns:
+            Edge weight in ``(0, 1]``.
+
+        Raises:
+            KeyError: If the edge does not exist.
+        """
+        ...
+
+    def node_score(self, entity_id: str) -> float:
+        """Return the last score recorded for an entity node.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            The score attribute stored on the node.
+
+        Raises:
+            KeyError: If the node does not exist.
+        """
+        ...
+
+
+@runtime_checkable
+class GraphBackend(GraphReader, Protocol):
     """Graph backend for causal propagation over entity relationships."""
 
     def add_entity(self, entity_id: str, score: float) -> None:
@@ -229,26 +300,6 @@ class GraphBackend(Protocol):
 
         Returns:
             Mapping of downstream entity key to propagated pressure.
-        """
-        ...
-
-
-@runtime_checkable
-class GraphReader(Protocol):
-    """Read-only structural introspection of the causal graph.
-
-    Implementations MUST be synchronous (graph is in-memory).
-    Returns empty collections for unknown nodes — never raises for absent nodes.
-    """
-
-    def has_node(self, entity_id: str) -> bool:
-        """Return ``True`` if the entity key exists in the graph.
-
-        Args:
-            entity_id: Normalized entity identifier.
-
-        Returns:
-            ``True`` if the node is present, ``False`` otherwise.
         """
         ...
 

@@ -18,6 +18,7 @@ from revok.config import (
     ScoringConfig,
     ServerConfig,
     StateStoreConfig,
+    InspectorConfig,
     UpstreamConfig,
 )
 from revok.entity_matcher import EntityMatcher
@@ -875,4 +876,108 @@ async def test_consumer_task_cancelled_on_cleanup(tmp_path: Path) -> None:
         task = app.get(SIGNAL_PROCESSOR_TASK_KEY)
         assert task is not None
         assert task.done()
+        await store.close()
+
+
+async def test_inspector_get_entity_returns_report_after_write(tmp_path: Path) -> None:
+    """GET /v1/inspector/entities/{entity_key} returns 200 + JSON after a matching write."""
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                # First trigger entity creation via a write
+                await client.post("/v1/memories", json={"content": "Alice arrived"})
+                # Now fetch the inspector report
+                resp = await client.get("/v1/inspector/entities/alice")
+                assert resp.status == 200
+                body = await resp.json()
+                assert body["entity_key"] == "alice"
+                assert "inspected_at" in body
+                assert isinstance(body.get("upstream"), list)
+                assert isinstance(body.get("downstream"), list)
+        finally:
+            await store.close()
+
+
+async def test_inspector_get_entity_returns_404_when_not_found(tmp_path: Path) -> None:
+    """GET /v1/inspector/entities/{entity_key} returns 404 JSON for unknown keys."""
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({}, status=200)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.get("/v1/inspector/entities/nobody")
+                assert resp.status == 404
+                body = await resp.json()
+                assert body.get("error") == "not_found"
+        finally:
+            await store.close()
+
+
+async def test_inspector_disabled_returns_503(tmp_path: Path) -> None:
+    """When inspector is disabled in config, endpoint returns 503."""
+    # Build a Config with inspector disabled
+    config = Config(
+        server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
+        upstream=UpstreamConfig(
+            url="http://127.0.0.1:1",
+            write_methods=["POST"],
+            write_paths=["/v1/memories"],
+        ),
+        entity_matcher=EntityMatcherConfig(
+            patterns=[PatternConfig(name="person", regex=r"\b[A-Z][a-z]+\b")]
+        ),
+        scoring=ScoringConfig(
+            half_life_seconds=86400.0,
+            signal_strength=0.3,
+            score_cap=1.0,
+        ),
+        state_store=StateStoreConfig(
+            sqlite_path=str(tmp_path / "proxy_disabled_inspector.db"),
+            hot_layer_max_entries=10,
+        ),
+        logging=LoggingConfig(level="WARNING", format="%(levelname)s %(message)s"),
+        inspector=InspectorConfig(enabled=False, signal_history_enabled=True, signal_history_max_rows=100, max_paths=10),
+    )
+
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/entities/alice")
+            assert resp.status == 503
+            body = await resp.json()
+            assert body.get("error") == "inspector_disabled"
+    finally:
         await store.close()

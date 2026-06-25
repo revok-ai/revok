@@ -11,8 +11,8 @@ import logging
 import time
 
 from revok.config import CausalGraphConfig
-from revok.interfaces import GraphBackend, MessageBus, StateStore
-from revok.models import EntityRecord, Signal
+from revok.interfaces import GraphBackend, MessageBus, SignalHistoryStore, StateStore
+from revok.models import EntityRecord, Signal, SignalRecord
 from revok.scoring import ScoringEngine
 
 logger = logging.getLogger(__name__)
@@ -31,12 +31,14 @@ class SignalProcessor:
         scorer: ScoringEngine,
         graph: GraphBackend,
         config: CausalGraphConfig,
+        history: SignalHistoryStore | None = None,
     ) -> None:
         self._bus = bus
         self._store = store
         self._scorer = scorer
         self._graph = graph
         self._config = config
+        self._history = history
 
     def _parse_signal_payload(self, signal: Signal) -> dict[str, object]:
         if not signal.original_body:
@@ -69,13 +71,24 @@ class SignalProcessor:
         severity_value = str(severity) if severity is not None else None
         return self._scorer.pressure_for_severity(severity_value)
 
+    async def _record_history_event(self, event: SignalRecord) -> None:
+        if self._history is None:
+            return
+        try:
+            await self._history.record(event)
+        except Exception:
+            logger.error("Signal history recording failed for '%s'", event.entity_key, exc_info=True)
+
     async def _apply_root(
         self,
         entity_key: str,
         pressure: float,
         processing_time: float,
         valid_time: float,
-    ) -> None:
+        source_id: str,
+        is_propagated: bool = False,
+        upstream_source: str | None = None,
+    ) -> tuple[float | None, float]:
         existing = await self._store.get(entity_key)
         if existing is not None and valid_time < existing.valid_time:
             logger.warning(
@@ -86,6 +99,7 @@ class SignalProcessor:
                 existing.valid_time,
             )
 
+        score_before = existing.score if existing is not None else None
         new_score = self._scorer.score_with_pressure(existing, valid_time, pressure)
         signal_count = (existing.signal_count + 1) if existing is not None else 1
         record = EntityRecord(
@@ -106,12 +120,28 @@ class SignalProcessor:
         await self._store.put(record)
         self._graph.add_entity(entity_key, new_score)
 
+        await self._record_history_event(
+            SignalRecord(
+                id=None,
+                entity_key=entity_key,
+                source_id=source_id,
+                processed_at=processing_time,
+                score_before=score_before,
+                score_after=new_score,
+                is_propagated=is_propagated,
+                upstream_source=upstream_source,
+            )
+        )
+
+        return score_before, new_score
+
     async def _apply_propagation(
         self,
         root_keys: list[str],
         pressure: float,
         processing_time: float,
         valid_time: float,
+        source_id: str,
     ) -> None:
         """Apply propagation from all roots and keep max pressure per entity."""
         aggregate: dict[str, float] = {}
@@ -135,6 +165,9 @@ class SignalProcessor:
                     propagated_pressure,
                     processing_time,
                     valid_time,
+                    source_id=source_id,
+                    is_propagated=True,
+                    upstream_source=root,
                 )
             except Exception:
                 logger.error(
@@ -165,7 +198,9 @@ class SignalProcessor:
 
         for root in roots:
             try:
-                await self._apply_root(root, pressure, processing_time, valid_time)
+                await self._apply_root(
+                    root, pressure, processing_time, valid_time, signal.source_id
+                )
             except Exception:
                 logger.error(
                     "SignalProcessor failed applying root entity '%s'",
@@ -179,6 +214,7 @@ class SignalProcessor:
                 pressure,
                 processing_time,
                 valid_time,
+                signal.source_id,
             )
 
     async def run(self) -> None:

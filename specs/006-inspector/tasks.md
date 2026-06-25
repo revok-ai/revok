@@ -11,11 +11,11 @@
 
 **Purpose**: Define all types and protocols before any implementation. Interface-first rule (Constitution § III): models before protocols, protocols before all concrete implementations. Every task here blocks all user story phases.
 
-- [ ] T001 Add 5 frozen dataclasses to `revok/models.py`: `CausalNeighbor`, `InspectionReport` (with `inspected_at: float`), `DownstreamEntity`, `PropagationPath`, `SignalRecord`
-- [ ] T002 Define 3 new Protocols in `revok/interfaces.py`: `GraphReader` (sync), `SignalHistoryStore` (async), `Inspector` (async); add to `tests/test_models.py` or new `tests/test_interfaces.py` if needed for Protocol conformance checks
-- [ ] T003 [P] Add `InspectorConfig` dataclass (enabled, signal_history_enabled, signal_history_max_rows, `max_paths: int = 100`) to `revok/config.py`; add YAML block to `config/revok.example.yaml` and `config/revok-zep.example.yaml`; add validation and test cases in `tests/test_config.py`
-- [ ] T004 [P] Extend `CausalGraph` class declaration to `class CausalGraph(GraphBackend, GraphReader):` in `revok/causal_graph.py`; implement `has_node()`, `successors()`, `predecessors()`, `edge_weight()`, `node_score()`; extend `tests/test_causal_graph.py` with GraphReader-specific tests
-- [ ] T005 Update plan reference between `<!-- SPECKIT START -->` and `<!-- SPECKIT END -->` markers in `.github/copilot-instructions.md` to point to `specs/006-inspector/plan.md`
+- [x] T001 Add 5 frozen dataclasses to `revok/models.py`: `CausalNeighbor`, `InspectionReport` (with `inspected_at: float`), `DownstreamEntity`, `PropagationPath`, `SignalRecord`
+- [x] T002 Define 3 new Protocols in `revok/interfaces.py`: `GraphReader` (sync), `SignalHistoryStore` (async), `Inspector` (async); add to `tests/test_models.py` or new `tests/test_interfaces.py` if needed for Protocol conformance checks
+- [x] T003 [P] Add `InspectorConfig` dataclass (enabled, signal_history_enabled, signal_history_max_rows, `max_paths: int = 100`) to `revok/config.py`; add YAML block to `config/revok.example.yaml` and `config/revok-zep.example.yaml`; add validation and test cases in `tests/test_config.py`
+- [x] T004 [P] Extend `CausalGraph` class declaration to `class CausalGraph(GraphBackend, GraphReader):` in `revok/causal_graph.py`; implement `has_node()`, `successors()`, `predecessors()`, `edge_weight()`, `node_score()`; extend `tests/test_causal_graph.py` with GraphReader-specific tests
+- [x] T005 Update plan reference between `<!-- SPECKIT START -->` and `<!-- SPECKIT END -->` markers in `.github/copilot-instructions.md` to point to `specs/006-inspector/plan.md`
 
 **Checkpoint**: All types, protocols, and config defined. CausalGraph implements GraphReader. Phase 2+ can begin.
 
@@ -35,8 +35,8 @@ No additional shared infrastructure needed beyond Phase 1. Phase 1 is the blocki
 
 **Independent Test**: `GET /v1/inspector/entities/alice` returns `score`, `signal_count`, `contradiction_count`, `inspected_at`, `upstream`/`downstream` neighbor lists. Returns 404 for unknown keys. Returns 503 when inspector disabled. Entity with no graph node returns empty upstream/downstream lists, not an error.
 
-- [ ] T006 [US1] Create `revok/inspector.py` (NEW) with `RevokInspector.__init__(store, graph, history)` and `inspect_entity(entity_key) -> InspectionReport | None`; create `tests/test_inspector.py` (NEW) with test cases: entity in store + graph, entity in store with no graph node, entity not in store (→ None), neighbor in graph but not in store (→ score: None)
-- [ ] T007 [US1] Wire `GET /v1/inspector/entities/{entity_key}` route in `revok/proxy.py`; instantiate `RevokInspector` in `build_app()`; add tests in `tests/test_proxy.py` for 200, 404, and 503 (inspector disabled)
+- [x] T006 [US1] Create `revok/inspector.py` (NEW) with `RevokInspector.__init__(store, graph, history)` and `inspect_entity(entity_key) -> InspectionReport | None`; create `tests/test_inspector.py` (NEW) with test cases: entity in store + graph, entity in store with no graph node, entity not in store (→ None), neighbor in graph but not in store (→ score: None)
+- [x] T007 [US1] Wire `GET /v1/inspector/entities/{entity_key}` route in `revok/proxy.py`; instantiate `RevokInspector` in `build_app()`; add tests in `tests/test_proxy.py` for 200, 404, and 503 (inspector disabled)
 
 **Checkpoint**: US-IP1 fully functional. A developer can call `GET /v1/inspector/entities/{entity_key}` and see entity state with causal neighbor lists.
 
@@ -54,9 +54,9 @@ No additional shared infrastructure needed beyond Phase 1. Phase 1 is the blocki
 
 **Independent Test (US-IP3)**: `GET /v1/inspector/entities/A/downstream` on a multi-level graph returns B, C, D with pressures. Cycle graph terminates. `max_hops=1` returns only direct neighbors. Entity below `min_pressure` threshold is excluded.
 
-- [ ] T008 [P] [US2] [US3] Implement `RevokInspector.get_downstream()` (forward BFS, max-pressure semantics, cycle-safe) in `revok/inspector.py`; add test cases in `tests/test_inspector.py`: linear chain, diamond, cycle, `max_hops=1`, pressure threshold exclusion
-- [ ] T009 [P] [US2] Implement `RevokInspector.get_paths()` (backward BFS, `max_paths` cap, pressure forward pass, `is_dominant` marking) in `revok/inspector.py`; add test cases: single path, diamond (two paths + dominant), no upstream (empty), cycle safety, `max_paths=1` on diamond, `max_paths=2` on 5-path graph
-- [ ] T010 [US2] [US3] Wire `GET /v1/inspector/entities/{entity_key}/downstream` and `GET /v1/inspector/entities/{entity_key}/paths` routes in `revok/proxy.py`; `/paths` reads `max_paths` from `config.inspector.max_paths` (not user-overridable); add tests in `tests/test_proxy.py` for 200, 404, 503
+- [x] T008 [P] [US2] [US3] Implement `RevokInspector.get_downstream()` (forward BFS, max-pressure semantics, cycle-safe) in `revok/inspector.py`; add test cases in `tests/test_inspector.py`: linear chain, diamond, cycle, `max_hops=1`, pressure threshold exclusion
+- [x] T009 [P] [US2] Implement `RevokInspector.get_paths()` (backward BFS, `max_paths` cap, pressure forward pass, `is_dominant` marking) in `revok/inspector.py`; add test cases: single path, diamond (two paths + dominant), no upstream (empty), cycle safety, `max_paths=1` on diamond, `max_paths=2` on 5-path graph
+- [x] T010 [US2] [US3] Wire `GET /v1/inspector/entities/{entity_key}/downstream` and `GET /v1/inspector/entities/{entity_key}/paths` routes in `revok/proxy.py`; `/paths` reads `max_paths` from `config.inspector.max_paths` (not user-overridable); add tests in `tests/test_proxy.py` for 200, 404, 503
 
 **Checkpoint**: US-IP2 and US-IP3 independently testable. All four Inspector read paths functional (entity + downstream + paths; signals pending).
 
@@ -70,10 +70,10 @@ No additional shared infrastructure needed beyond Phase 1. Phase 1 is the blocki
 
 **Independent Test**: Post signal for `alice` → `GET /v1/inspector/entities/alice/signals` returns record with `is_propagated: false`. Downstream `bob` returns record with `is_propagated: true`, `upstream_source: "alice"`. Empty list for entity with no signals. 404 for unknown entity. 501 when `signal_history_enabled: false`.
 
-- [ ] T011 [US4] Create `revok/signal_history.py` (NEW) with `SqliteSignalHistoryStore` implementing `SignalHistoryStore` Protocol (`open()`, `record()`, `get_for_entity()`, `trim_for_entity()`, `close()`); `record()` enforces `signal_history_max_rows` via trim; create `tests/test_signal_history.py` (NEW) with round-trip, trim, is_propagated persistence, idempotent close
-- [ ] T012 [US4] Inject `history: SignalHistoryStore | None` into `SignalProcessor.__init__()` in `revok/signal_processor.py`; record events in `_apply_root()` (is_propagated=False) and `_apply_propagation()` (is_propagated=True, upstream_source=root); `_apply_root()` must return `(score_before, score_after)`; add tests in `tests/test_signal_processor.py` including benchmark (history-enabled ≤ 2× baseline latency on 10-node graph)
-- [ ] T013 [US4] Implement `RevokInspector.get_signals()` in `revok/inspector.py`; wire `GET /v1/inspector/entities/{entity_key}/signals` in `revok/proxy.py`; 404 for unknown entity, 501 for history disabled (returns None), 200 with empty list for entity with no signals; add tests in `tests/test_proxy.py`
-- [ ] T014 [US4] Wire `SqliteSignalHistoryStore` instantiation in `revok/proxy.py` `build_app()`: open on startup, pass to both `SignalProcessor` and `RevokInspector`, close on shutdown; no-op when `signal_history_enabled: false`
+- [x] T011 [US4] Create `revok/signal_history.py` (NEW) with `SqliteSignalHistoryStore` implementing `SignalHistoryStore` Protocol (`open()`, `record()`, `get_for_entity()`, `trim_for_entity()`, `close()`); `record()` enforces `signal_history_max_rows` via trim; create `tests/test_signal_history.py` (NEW) with round-trip, trim, is_propagated persistence, idempotent close
+- [x] T012 [US4] Inject `history: SignalHistoryStore | None` into `SignalProcessor.__init__()` in `revok/signal_processor.py`; record events in `_apply_root()` (is_propagated=False) and `_apply_propagation()` (is_propagated=True, upstream_source=root); `_apply_root()` must return `(score_before, score_after)`; add tests in `tests/test_signal_processor.py` including benchmark (history-enabled ≤ 2× baseline latency on 10-node graph)
+- [x] T013 [US4] Implement `RevokInspector.get_signals()` in `revok/inspector.py`; wire `GET /v1/inspector/entities/{entity_key}/signals` in `revok/proxy.py`; 404 for unknown entity, 501 for history disabled (returns None), 200 with empty list for entity with no signals; add tests in `tests/test_proxy.py`
+- [x] T014 [US4] Wire `SqliteSignalHistoryStore` instantiation in `revok/proxy.py` `build_app()`: open on startup, pass to both `SignalProcessor` and `RevokInspector`, close on shutdown; no-op when `signal_history_enabled: false`
 
 **Checkpoint**: US-IP4 independently testable. Full signal history round-trip works for both direct and propagated signals.
 
