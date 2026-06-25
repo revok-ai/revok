@@ -49,14 +49,15 @@ class RevokInspector:
     def __init__(
         self,
         store: StateStore,
-        graph: GraphReader,
+        graph: GraphReader | None,
         history: SignalHistoryStore | None,
     ) -> None:
         """Initialise the inspector.
 
         Args:
             store: Persistent entity state store (async).
-            graph: Read-only causal graph (sync).
+            graph: Read-only causal graph (sync); pass ``None`` when the causal
+                graph backend is disabled — all graph-derived fields return empty.
             history: Optional signal history store; pass ``None`` to disable.
         """
         self._store = store
@@ -83,10 +84,11 @@ class RevokInspector:
         upstream: list[CausalNeighbor] = []
         downstream: list[CausalNeighbor] = []
 
-        if self._graph.has_node(entity_key):
-            for pred in self._graph.predecessors(entity_key):
+        _graph = self._graph
+        if _graph is not None and _graph.has_node(entity_key):
+            for pred in _graph.predecessors(entity_key):
                 try:
-                    weight = self._graph.edge_weight(pred, entity_key)
+                    weight = _graph.edge_weight(pred, entity_key)
                 except KeyError:
                     weight = 1.0
                 neighbor_record = await self._store.get(pred)
@@ -99,9 +101,9 @@ class RevokInspector:
                     )
                 )
 
-            for succ in self._graph.successors(entity_key):
+            for succ in _graph.successors(entity_key):
                 try:
-                    weight = self._graph.edge_weight(entity_key, succ)
+                    weight = _graph.edge_weight(entity_key, succ)
                 except KeyError:
                     weight = 1.0
                 neighbor_record = await self._store.get(succ)
@@ -148,9 +150,10 @@ class RevokInspector:
         Returns:
             List of ``DownstreamEntity`` sorted by descending pressure.
         """
-        if not self._graph.has_node(entity_key):
+        if self._graph is None or not self._graph.has_node(entity_key):
             return []
 
+        _graph = self._graph
         # frontier maps entity_key -> (pressure, hops)
         frontier: dict[str, tuple[float, int]] = {entity_key: (1.0, 0)}
         visited: set[str] = {entity_key}
@@ -160,11 +163,11 @@ class RevokInspector:
         for _hop in range(max_hops):
             next_frontier: dict[str, tuple[float, int]] = {}
             for source, (src_pressure, src_hops) in frontier.items():
-                for target in self._graph.successors(source):
+                for target in _graph.successors(source):
                     if target in visited:
                         continue
                     try:
-                        w = self._graph.edge_weight(source, target)
+                        w = _graph.edge_weight(source, target)
                     except KeyError:
                         w = 1.0
                     p = src_pressure * w * attenuation
@@ -213,9 +216,10 @@ class RevokInspector:
         Returns:
             List of ``PropagationPath`` with ``is_dominant`` set on the highest-pressure path.
         """
-        if not self._graph.has_node(entity_key):
+        if self._graph is None or not self._graph.has_node(entity_key) or max_hops == 0:
             return []
 
+        _graph = self._graph
         # Phase 1: backward BFS — discover simple paths from roots to entity_key
         # Each queue entry: (current_node, path_so_far_as_list, visited_set)
         raw_paths: list[list[str]] = []
@@ -225,7 +229,7 @@ class RevokInspector:
         while queue and len(raw_paths) < max_paths:
             current, path, path_visited = queue.popleft()
 
-            preds = self._graph.predecessors(current)
+            preds = _graph.predecessors(current)
             if not preds:
                 # current is a root (no predecessors) — record path in root-first order
                 # only if the path contains at least one upstream hop (length > 1)
@@ -257,7 +261,7 @@ class RevokInspector:
                 prev = raw_path[i - 1]
                 curr = raw_path[i]
                 try:
-                    w = self._graph.edge_weight(prev, curr)
+                    w = _graph.edge_weight(prev, curr)
                 except KeyError:
                     w = 1.0
                 p = p * w * attenuation

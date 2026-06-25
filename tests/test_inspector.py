@@ -127,6 +127,20 @@ class TestInspectEntity:
         assert result.downstream[0].score is None
 
     @pytest.mark.asyncio
+    async def test_graph_none_returns_entity_state_with_empty_neighbors(self) -> None:
+        """Defensive robustness: RevokInspector handles graph=None without raising,
+        returning entity state with empty upstream/downstream lists."""
+        store = _MemoryStore()
+        await store.put(_record("alice", 0.6))
+        inspector = RevokInspector(store, None, None)
+        result = await inspector.inspect_entity("alice")
+        assert result is not None
+        assert result.entity_key == "alice"
+        assert result.score == pytest.approx(0.6)
+        assert result.upstream == []
+        assert result.downstream == []
+
+    @pytest.mark.asyncio
     async def test_inspected_at_is_recent(self) -> None:
         import time
 
@@ -239,6 +253,15 @@ class TestGetDownstream:
         pressures = [e.pressure for e in result]
         assert pressures == sorted(pressures, reverse=True)
 
+    @pytest.mark.asyncio
+    async def test_max_hops_0_returns_empty(self) -> None:
+        store = _MemoryStore()
+        graph = CausalGraph()
+        graph.add_relation("a", "b", weight=1.0)
+        inspector = RevokInspector(store, graph, None)
+        result = await inspector.get_downstream("a", max_hops=0, min_pressure=0.01, attenuation=0.8)
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # T009: get_paths
@@ -348,6 +371,15 @@ class TestGetPaths:
         assert path.pressures[0] == pytest.approx(1.0)
         assert path.pressures[1] == pytest.approx(0.8)
         assert path.pressures[2] == pytest.approx(0.4)
+
+    @pytest.mark.asyncio
+    async def test_max_hops_0_returns_empty(self) -> None:
+        store = _MemoryStore()
+        graph = CausalGraph()
+        graph.add_relation("a", "b", weight=1.0)
+        inspector = RevokInspector(store, graph, None)
+        result = await inspector.get_paths("b", max_hops=0, min_pressure=0.001, attenuation=0.8, max_paths=100)
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +541,7 @@ class TestFullExplainabilityScenario:
         propagated = signals_b[0]
         assert propagated.is_propagated is True
         assert propagated.entity_key == "b"
+        assert propagated.upstream_source == "a"
 
         # ── inspect_entity("b"): state + upstream a + empty downstream ───
         before_inspect = time_mod.time()
@@ -561,6 +594,20 @@ class TestFullExplainabilityScenario:
 class TestPerformanceSC003:
     """SC-003: get_downstream and get_paths complete within budget on a large graph."""
 
+    def _build_500_edge_graph(self) -> tuple[CausalGraph, str, str]:
+        # 25 sources → 50 middles → 25 sinks = 100 nodes; 250 + 250 = 500 edges
+        graph = CausalGraph()
+        sources = [f"src{i}" for i in range(25)]
+        middles = [f"mid{i}" for i in range(50)]
+        sinks = [f"snk{i}" for i in range(25)]
+        for i, src in enumerate(sources):
+            for j in range(10):
+                graph.add_relation(src, middles[(i * 2 + j) % 50], weight=0.9)
+        for i, mid in enumerate(middles):
+            for j in range(5):
+                graph.add_relation(mid, sinks[(i + j) % 25], weight=0.9)
+        return graph, sources[0], sinks[0]
+
     def _build_layered_graph(self) -> tuple[CausalGraph, str, str]:
         # 10 layers × 10 nodes = 100 nodes; each node → 5 nodes in next layer = 450 edges
         graph = CausalGraph()
@@ -602,3 +649,36 @@ class TestPerformanceSC003:
         elapsed = time.perf_counter() - start
 
         assert elapsed < 1.0, f"get_paths on ~100-node graph took {elapsed:.3f}s; budget 1.0s (SC-003)"
+
+    @pytest.mark.asyncio
+    async def test_get_downstream_500_edges_within_200ms(self) -> None:
+        """SC-003: get_downstream on 100-node/500-edge graph completes within 200ms."""
+        import time
+
+        store = _MemoryStore()
+        graph, root, _ = self._build_500_edge_graph()
+        inspector = RevokInspector(store, graph, None)
+
+        start = time.perf_counter()
+        result = await inspector.get_downstream(root, max_hops=10, min_pressure=0.0001, attenuation=0.95)
+        elapsed = time.perf_counter() - start
+
+        assert len(result) > 0, "expected downstream nodes in 500-edge graph"
+        assert elapsed < 0.200, f"get_downstream on 100-node/500-edge graph took {elapsed:.3f}s; budget 200ms (SC-003)"
+
+    @pytest.mark.asyncio
+    async def test_get_paths_500_edges_within_200ms(self) -> None:
+        """SC-003: get_paths on 100-node/500-edge graph completes within 200ms."""
+        import time
+
+        store = _MemoryStore()
+        graph, _, leaf = self._build_500_edge_graph()
+        inspector = RevokInspector(store, graph, None)
+
+        start = time.perf_counter()
+        result = await inspector.get_paths(
+            leaf, max_hops=10, min_pressure=0.0001, attenuation=0.95, max_paths=100
+        )
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 0.200, f"get_paths on 100-node/500-edge graph took {elapsed:.3f}s; budget 200ms (SC-003)"
