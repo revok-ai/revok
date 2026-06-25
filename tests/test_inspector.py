@@ -395,3 +395,159 @@ class TestGetSignals:
         finally:
             await history.close()
             os.unlink(db_path)
+
+
+# ---------------------------------------------------------------------------
+# T017: Full explainability acceptance scenario (E2E)
+# ---------------------------------------------------------------------------
+
+
+class TestFullExplainabilityScenario:
+    """End-to-end acceptance test covering all Inspector read paths.
+
+    Graph: A → B (weight=0.8)
+    Signal posted for A with causal propagation enabled.
+    Validates StateStore, SignalHistoryStore, and all four Inspector methods.
+    """
+
+    @pytest.mark.asyncio
+    async def test_full_inspector_round_trip(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        import json
+        import time as time_mod
+        from pathlib import Path
+
+        from revok.config import CausalGraphConfig, ScoringConfig, SignalPressureConfig, StateStoreConfig
+        from revok.models import Signal
+        from revok.scoring import ScoringEngine
+        from revok.signal_history import SqliteSignalHistoryStore
+        from revok.signal_processor import SignalProcessor
+        from revok.state_store import SqliteStateStore
+
+        # ── infrastructure setup ────────────────────────────────────────
+        db_path = str(tmp_path / "e2e.db")
+        history_db_path = str(tmp_path / "e2e_history.db")
+
+        store = SqliteStateStore(StateStoreConfig(sqlite_path=db_path, hot_layer_max_entries=50))
+        await store.open()
+
+        history = SqliteSignalHistoryStore(history_db_path, max_rows=1000)
+        await history.open()
+
+        graph = CausalGraph()
+        graph.add_relation("a", "b", weight=0.8)
+
+        scorer = ScoringEngine(
+            ScoringConfig(
+                half_life_seconds=86400.0,
+                signal_strength=0.3,
+                score_cap=1.0,
+                signal_pressure=SignalPressureConfig(
+                    severity_weights={"low": 0.2, "medium": 0.5, "high": 0.8},
+                    default_severity="medium",
+                ),
+            )
+        )
+
+        class _NullBus:
+            async def publish(self, signal: Signal) -> None:
+                pass
+
+            async def consume(self) -> Signal:
+                raise RuntimeError("not used")
+
+            async def close(self) -> None:
+                pass
+
+        causal_cfg = CausalGraphConfig(
+            enabled=True,
+            max_hops=3,
+            min_pressure=0.01,
+            attenuation=1.0,
+        )
+        processor = SignalProcessor(
+            _NullBus(),
+            store,
+            scorer,
+            graph,
+            causal_cfg,
+            history=history,
+        )
+        inspector = RevokInspector(store, graph, history)
+
+        # ── process a signal for A ───────────────────────────────────────
+        now = time_mod.time()
+        signal = Signal(
+            raw_content="test",
+            source_id="test-source",
+            timestamp=now,
+            http_method="POST",
+            http_path="/signals",
+            original_body=json.dumps({"entity_refs": ["a"], "severity": "high"}).encode(),
+            headers={},
+        )
+        await processor.process_one(signal)
+
+        # ── StateStore: both A and B must be updated ─────────────────────
+        record_a = await store.get("a")
+        record_b = await store.get("b")
+        assert record_a is not None, "a must be in state store after processing"
+        assert record_b is not None, "b must be in state store after propagation"
+        assert record_a.score > 0, "a score must be positive"
+        assert record_b.score > 0, "b score must be positive"
+
+        # ── SignalHistoryStore: direct record for a ───────────────────────
+        signals_a = await history.get_for_entity("a")
+        assert len(signals_a) >= 1
+        direct = signals_a[0]
+        assert direct.is_propagated is False
+        assert direct.upstream_source is None
+        assert direct.entity_key == "a"
+
+        # ── SignalHistoryStore: propagated record for b ───────────────────
+        signals_b = await history.get_for_entity("b")
+        assert len(signals_b) >= 1
+        propagated = signals_b[0]
+        assert propagated.is_propagated is True
+        assert propagated.entity_key == "b"
+
+        # ── inspect_entity("b"): state + upstream a + empty downstream ───
+        before_inspect = time_mod.time()
+        report = await inspector.inspect_entity("b")
+        after_inspect = time_mod.time()
+        assert report is not None
+        assert report.score == pytest.approx(record_b.score)
+        assert len(report.upstream) == 1
+        assert report.upstream[0].entity_key == "a"
+        assert report.upstream[0].direction == "upstream"
+        assert report.upstream[0].weight == pytest.approx(0.8)
+        assert report.downstream == []
+        assert before_inspect <= report.inspected_at <= after_inspect
+
+        # ── get_downstream("a"): returns b ──────────────────────────────
+        downstream = await inspector.get_downstream(
+            "a", max_hops=causal_cfg.max_hops, min_pressure=causal_cfg.min_pressure, attenuation=causal_cfg.attenuation
+        )
+        downstream_keys = [e.entity_key for e in downstream]
+        assert "b" in downstream_keys
+
+        # ── get_paths("b"): single path [a, b] marked dominant ──────────
+        paths = await inspector.get_paths(
+            "b",
+            max_hops=causal_cfg.max_hops,
+            min_pressure=causal_cfg.min_pressure,
+            attenuation=causal_cfg.attenuation,
+            max_paths=100,
+        )
+        assert len(paths) == 1
+        path = paths[0]
+        assert path.hops == ["a", "b"]
+        assert path.is_dominant is True
+
+        # ── get_signals("b"): propagation record visible ──────────────────
+        signals_via_inspector = await inspector.get_signals("b")
+        assert signals_via_inspector is not None
+        assert any(r.is_propagated for r in signals_via_inspector)
+
+        # ── teardown ────────────────────────────────────────────────────
+        await history.close()
+        await store.close()

@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from revok.causal_graph import CausalGraph
+from tests.contract.test_graph_reader_contract import GraphReaderContract
 
 
 class TestAddEntity:
@@ -278,3 +279,15 @@ class TestGraphReaderProtocol:
         g.add_relation("c", "b", weight=0.3)
         assert set(g.successors("b")) == set()
         assert set(g.predecessors("b")) == {"a", "c"}
+
+
+# ---------------------------------------------------------------------------
+# T016: Run the full GraphReaderContract suite against CausalGraph
+# ---------------------------------------------------------------------------
+
+
+class TestCausalGraphContract(GraphReaderContract):
+    """Validate CausalGraph satisfies the full GraphReader + propagation contract."""
+
+    def make_backend(self) -> CausalGraph:
+        return CausalGraph()
