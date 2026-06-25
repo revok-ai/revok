@@ -234,3 +234,12 @@ examples/subscription_demo/demo_state.json
 *.db
 demo_state.json
 /TASKS.md
+# Claude Code local context (do not commit — internal strategy/IP)
+/CLAUDE.md
+/CLAUDE.local.md
+
+/.specify/
+/specs/
+/.claude/
+/.github/agents/
+/.github/prompts/
