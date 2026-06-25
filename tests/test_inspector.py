@@ -551,3 +551,54 @@ class TestFullExplainabilityScenario:
         # ── teardown ────────────────────────────────────────────────────
         await history.close()
         await store.close()
+
+
+# ---------------------------------------------------------------------------
+# SC-003: performance — 100-node / ~450-edge graph within 1 s budget
+# ---------------------------------------------------------------------------
+
+
+class TestPerformanceSC003:
+    """SC-003: get_downstream and get_paths complete within budget on a large graph."""
+
+    def _build_layered_graph(self) -> tuple[CausalGraph, str, str]:
+        # 10 layers × 10 nodes = 100 nodes; each node → 5 nodes in next layer = 450 edges
+        graph = CausalGraph()
+        layers = [[f"l{layer}_{i}" for i in range(10)] for layer in range(10)]
+        for layer_idx, layer in enumerate(layers[:-1]):
+            next_layer = layers[layer_idx + 1]
+            for src in layer:
+                for tgt in next_layer[:5]:
+                    graph.add_relation(src, tgt, weight=0.9)
+        return graph, layers[0][0], layers[-1][-1]
+
+    @pytest.mark.asyncio
+    async def test_get_downstream_completes_within_budget(self) -> None:
+        import time
+
+        store = _MemoryStore()
+        graph, root, _ = self._build_layered_graph()
+        inspector = RevokInspector(store, graph, None)
+
+        start = time.perf_counter()
+        result = await inspector.get_downstream(root, max_hops=15, min_pressure=0.0001, attenuation=0.95)
+        elapsed = time.perf_counter() - start
+
+        assert len(result) > 0, "expected downstream nodes in layered graph"
+        assert elapsed < 1.0, f"get_downstream on ~100-node graph took {elapsed:.3f}s; budget 1.0s (SC-003)"
+
+    @pytest.mark.asyncio
+    async def test_get_paths_completes_within_budget(self) -> None:
+        import time
+
+        store = _MemoryStore()
+        graph, _, leaf = self._build_layered_graph()
+        inspector = RevokInspector(store, graph, None)
+
+        start = time.perf_counter()
+        result = await inspector.get_paths(
+            leaf, max_hops=15, min_pressure=0.0001, attenuation=0.95, max_paths=100
+        )
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 1.0, f"get_paths on ~100-node graph took {elapsed:.3f}s; budget 1.0s (SC-003)"
