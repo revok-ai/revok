@@ -533,3 +533,55 @@ class TestSignalPressureConfig:
         )
         with pytest.raises(ConfigError, match="severity_weights"):
             load_config(_write_yaml(tmp_path, yaml))
+
+
+# ---------------------------------------------------------------------------
+# T003: InspectorConfig tests
+# ---------------------------------------------------------------------------
+
+
+class TestInspectorConfig:
+    def test_inspector_defaults_when_absent(self, tmp_path: Path) -> None:
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.inspector.enabled is True
+        assert cfg.inspector.signal_history_enabled is True
+        assert cfg.inspector.signal_history_max_rows == 10_000
+        assert cfg.inspector.max_paths == 100
+
+    def test_inspector_explicit_values_loaded(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ninspector:\n"
+            + "  enabled: false\n"
+            + "  signal_history_enabled: false\n"
+            + "  signal_history_max_rows: 500\n"
+            + "  max_paths: 50\n"
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.inspector.enabled is False
+        assert cfg.inspector.signal_history_enabled is False
+        assert cfg.inspector.signal_history_max_rows == 500
+        assert cfg.inspector.max_paths == 50
+
+    def test_inspector_signal_history_max_rows_zero_raises(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ninspector:\n"
+            + "  signal_history_max_rows: 0\n"
+        )
+        with pytest.raises(ConfigError, match="signal_history_max_rows"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_inspector_max_paths_zero_raises(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ninspector:\n"
+            + "  max_paths: 0\n"
+        )
+        with pytest.raises(ConfigError, match="max_paths"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_inspector_not_a_mapping_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ninspector: not_a_mapping\n"
+        with pytest.raises(ConfigError, match="inspector"):
+            load_config(_write_yaml(tmp_path, yaml))

@@ -25,7 +25,16 @@ from __future__ import annotations
 
 from typing import AsyncIterator, Protocol, runtime_checkable
 
-from revok.models import EntityRecord, MemoryAdapterResponse, EnrichedPayload, Signal
+from revok.models import (
+    DownstreamEntity,
+    EntityRecord,
+    EnrichedPayload,
+    InspectionReport,
+    MemoryAdapterResponse,
+    PropagationPath,
+    Signal,
+    SignalRecord,
+)
 
 
 @runtime_checkable
@@ -185,6 +194,77 @@ class MemoryAdapter(Protocol):
 
 
 @runtime_checkable
+class GraphReader(Protocol):
+    """Read-only structural introspection of the causal graph.
+
+    Implementations MUST be synchronous (graph is in-memory).
+    Returns empty collections for unknown nodes — never raises for absent nodes.
+    """
+
+    def has_node(self, entity_id: str) -> bool:
+        """Return ``True`` if the entity key exists in the graph.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            ``True`` if the node is present, ``False`` otherwise.
+        """
+        ...
+
+    def successors(self, entity_id: str) -> list[str]:
+        """Return the direct successors (downstream neighbors) of an entity.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            List of successor entity keys, or ``[]`` for unknown nodes.
+        """
+        ...
+
+    def predecessors(self, entity_id: str) -> list[str]:
+        """Return the direct predecessors (upstream neighbors) of an entity.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            List of predecessor entity keys, or ``[]`` for unknown nodes.
+        """
+        ...
+
+    def edge_weight(self, source_id: str, target_id: str) -> float:
+        """Return the weight of the directed edge from *source_id* to *target_id*.
+
+        Args:
+            source_id: Normalized source entity identifier.
+            target_id: Normalized target entity identifier.
+
+        Returns:
+            Edge weight in ``(0, 1]``.
+
+        Raises:
+            KeyError: If the edge does not exist.
+        """
+        ...
+
+    def node_score(self, entity_id: str) -> float:
+        """Return the last score recorded for an entity node.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            The score attribute stored on the node.
+
+        Raises:
+            KeyError: If the node does not exist.
+        """
+        ...
+
+
+@runtime_checkable
 class GraphBackend(Protocol):
     """Graph backend for causal propagation over entity relationships."""
 
@@ -220,5 +300,111 @@ class GraphBackend(Protocol):
 
         Returns:
             Mapping of downstream entity key to propagated pressure.
+        """
+        ...
+
+
+@runtime_checkable
+class SignalHistoryStore(Protocol):
+    """Persistent log of signal events for explainability queries."""
+
+    async def record(self, event: SignalRecord) -> None:
+        """Persist a single signal event.
+
+        Args:
+            event: The ``SignalRecord`` to persist. ``event.id`` is ignored;
+                the store assigns an auto-incremented row id.
+        """
+        ...
+
+    async def get_for_entity(self, entity_key: str) -> list[SignalRecord]:
+        """Retrieve all recorded signal events for an entity.
+
+        Args:
+            entity_key: Normalized entity identifier.
+
+        Returns:
+            List of ``SignalRecord`` instances ordered by ``processed_at`` descending.
+        """
+        ...
+
+    async def close(self) -> None:
+        """Flush pending writes and release database resources.
+
+        Must be idempotent — safe to call multiple times.
+        """
+        ...
+
+
+@runtime_checkable
+class Inspector(Protocol):
+    """Read-only explainability API over entity state, causal graph, and signal history."""
+
+    async def inspect_entity(self, entity_key: str) -> InspectionReport | None:
+        """Return a snapshot of an entity's state and its direct causal neighbors.
+
+        Args:
+            entity_key: Normalized entity identifier.
+
+        Returns:
+            ``InspectionReport`` if the entity is in the store, ``None`` otherwise.
+        """
+        ...
+
+    async def get_downstream(
+        self,
+        entity_key: str,
+        *,
+        max_hops: int,
+        min_pressure: float,
+        attenuation: float,
+    ) -> list[DownstreamEntity]:
+        """Return all entities reachable from *entity_key* via forward propagation.
+
+        Args:
+            entity_key: Root entity identifier.
+            max_hops: Maximum BFS depth.
+            min_pressure: Minimum pressure threshold; nodes below this are excluded.
+            attenuation: Per-hop pressure multiplier in ``(0, 1]``.
+
+        Returns:
+            List of ``DownstreamEntity`` sorted by descending pressure.
+        """
+        ...
+
+    async def get_paths(
+        self,
+        entity_key: str,
+        *,
+        max_hops: int,
+        min_pressure: float,
+        attenuation: float,
+        max_paths: int,
+    ) -> list[PropagationPath]:
+        """Return all propagation paths from upstream roots to *entity_key*.
+
+        Args:
+            entity_key: Target entity identifier.
+            max_hops: Maximum backward BFS depth.
+            min_pressure: Minimum pressure threshold for path inclusion.
+            attenuation: Per-hop pressure multiplier in ``(0, 1]``.
+            max_paths: Maximum number of paths to return.
+
+        Returns:
+            List of ``PropagationPath`` with ``is_dominant`` set on the highest-pressure path.
+        """
+        ...
+
+    async def get_signals(self, entity_key: str) -> list[SignalRecord] | None:
+        """Return the signal history for *entity_key*, or ``None`` if history is disabled.
+
+        Args:
+            entity_key: Normalized entity identifier.
+
+        Returns:
+            List of ``SignalRecord`` if history is enabled, ``None`` if disabled.
+
+        Raises:
+            EntityNotFoundError: If the entity does not exist in the store.
         """
         ...

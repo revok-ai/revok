@@ -79,6 +79,12 @@ state_store:
   sqlite_path: "./revok_zep_state.db"
   hot_layer_max_entries: 1000
 
+inspector:
+  enabled: true
+  signal_history_enabled: true
+  signal_history_max_rows: 10000
+  max_paths: 100
+
 logging:
   level: "DEBUG"
   format: "%(asctime)s %(name)s %(levelname)s %(message)s"

@@ -22,12 +22,12 @@ import logging
 
 import networkx as nx  # type: ignore[import-untyped]
 
-from revok.interfaces import GraphBackend
+from revok.interfaces import GraphBackend, GraphReader
 
 logger = logging.getLogger(__name__)
 
 
-class CausalGraph(GraphBackend):
+class CausalGraph(GraphBackend, GraphReader):
     """A directed weighted graph of entity relationships.
 
     Entities are nodes; relations are directed edges.  The ``score`` attribute
@@ -139,3 +139,77 @@ class CausalGraph(GraphBackend):
     def edge_count(self) -> int:
         """Return the number of directed relation edges currently in the graph."""
         return int(self._graph.number_of_edges())
+
+    # ------------------------------------------------------------------
+    # GraphReader interface (read-only structural introspection)
+    # ------------------------------------------------------------------
+
+    def has_node(self, entity_id: str) -> bool:
+        """Return ``True`` if the entity key exists in the graph.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            ``True`` if the node is present, ``False`` otherwise.
+        """
+        return bool(self._graph.has_node(entity_id))
+
+    def successors(self, entity_id: str) -> list[str]:
+        """Return the direct successors of an entity.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            List of successor entity keys, or ``[]`` for unknown nodes.
+        """
+        if not self._graph.has_node(entity_id):
+            return []
+        return list(self._graph.successors(entity_id))
+
+    def predecessors(self, entity_id: str) -> list[str]:
+        """Return the direct predecessors of an entity.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            List of predecessor entity keys, or ``[]`` for unknown nodes.
+        """
+        if not self._graph.has_node(entity_id):
+            return []
+        return list(self._graph.predecessors(entity_id))
+
+    def edge_weight(self, source_id: str, target_id: str) -> float:
+        """Return the weight of the directed edge from *source_id* to *target_id*.
+
+        Args:
+            source_id: Normalized source entity identifier.
+            target_id: Normalized target entity identifier.
+
+        Returns:
+            Edge weight in ``(0, 1]``.
+
+        Raises:
+            KeyError: If the edge does not exist.
+        """
+        if not self._graph.has_edge(source_id, target_id):
+            raise KeyError(f"No edge from {source_id!r} to {target_id!r}")
+        return float(self._graph[source_id][target_id].get("weight", 1.0))
+
+    def node_score(self, entity_id: str) -> float:
+        """Return the last score recorded for an entity node.
+
+        Args:
+            entity_id: Normalized entity identifier.
+
+        Returns:
+            The score attribute stored on the node.
+
+        Raises:
+            KeyError: If the node does not exist.
+        """
+        if not self._graph.has_node(entity_id):
+            raise KeyError(f"No node {entity_id!r}")
+        return float(self._graph.nodes[entity_id].get("score", 0.0))

@@ -52,7 +52,7 @@ services:
       - "7771:7771"
     volumes:
       # Mount the demo config read-only; persisted state goes to a named volume.
-      - ./revok.yaml:/app/revok.yaml:ro
+      - ./revok.yaml:/config/revok.yaml:ro
       - revok_data:/data
     depends_on:
       mem0:
