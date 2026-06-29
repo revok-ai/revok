@@ -4,10 +4,39 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
 
 jobs:
+  changes:
+    name: Detect Falkor-Relevant Changes
+    runs-on: ubuntu-latest
+    outputs:
+      falkor: ${{ steps.filter.outputs.falkor }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            falkor:
+              - 'revok/falkordb_backend.py'
+              - 'revok/proxy.py'
+              - 'revok/interfaces.py'
+              - 'revok/causal_graph.py'
+              - 'revok/config.py'
+              - 'tests/contract/**'
+              - 'tests/test_causal_graph.py'
+              - 'tests/test_config.py'
+              - 'pyproject.toml'
+              - 'compose.falkordblite-tests.yaml'
+              - 'Dockerfile.falkordblite-tests'
+              - 'Dockerfile.falkordblite-tests.dockerignore'
+
   test:
     name: Test (Python ${{ matrix.python-version }})
+    needs: changes
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -41,3 +70,53 @@ jobs:
           else
             echo "✅ No forbidden enterprise imports found"
           fi
+
+  falkordb-conformance:
+    name: FalkorDB Lite Conformance
+    needs: changes
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main') ||
+      needs.changes.outputs.falkor == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-falkor-${{ hashFiles('pyproject.toml') }}
+      - name: Validate Falkor compose file
+        run: docker compose -f compose.falkordblite-tests.yaml config --quiet
+      - name: Install dependencies with Falkor extra
+        run: pip install -e ".[dev,falkordb-lite]"
+      - name: Run FalkorDB contract tests
+        run: pytest tests/contract/test_falkordb_backend_contract.py -v
+
+  ci-status:
+    name: CI Status
+    needs: [test, falkordb-conformance]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate required CI outcomes
+        run: |
+          echo "test result: ${{ needs.test.result }}"
+          echo "falkordb-conformance result: ${{ needs.falkordb-conformance.result }}"
+
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Core test job did not succeed"
+            exit 1
+          fi
+
+          if [ "${{ needs.falkordb-conformance.result }}" != "success" ] && [ "${{ needs.falkordb-conformance.result }}" != "skipped" ]; then
+            echo "FalkorDB conformance job failed or was cancelled"
+            exit 1
+          fi
+
+          echo "All required CI checks passed"
