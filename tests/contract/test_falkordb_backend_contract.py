@@ -30,6 +30,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not _AVAILABLE, reason="falkordblite not installed")
 
 
+@pytest.mark.timeout(30)  # teardown_class shuts down embedded redis (up to 10s poll loop)
 class TestFalkorDBGraphBackendContract(GraphReaderContract):
     """Run the full GraphReaderContract suite against FalkorDBGraphBackend."""
 

@@ -206,7 +206,7 @@ subscription_demo/
 ├── database.py       # SQLite subscription state DB
 ├── demo_state.py     # Demo state persistence
 ├── revok.yaml        # Revok proxy config (causal graph + entities)
-├── docker-compose.yml
+├── compose.yaml
 ├── Dockerfile.api
 ├── .env.example
 └── dashboard/        # Next.js dashboard
@@ -387,7 +387,7 @@ subscription_demo/
 ├── database.py       # SQLite product pricing DB
 ├── demo_state.py     # Demo state persistence
 ├── revok.yaml        # Revok proxy config (upstream → redis-ams)
-├── docker-compose.yml
+├── compose.yaml
 ├── Dockerfile.api
 ├── .env.example
 └── dashboard/        # Next.js dashboard (identical to other demos)

@@ -1,5 +1,5 @@
 # Local development override — builds revok from source instead of pulling DockerHub.
-# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+# Usage: docker compose -f compose.yaml -f compose.local.yaml up --build
 
 services:
   revok:
