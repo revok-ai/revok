@@ -53,8 +53,8 @@ class TestFalkorDBGraphBackendContract(GraphReaderContract):
         try:
             assert self._shared_db is not None
             self._shared_db.select_graph(self._graph_name).delete()
-        except Exception:
-            pass
+        except Exception as exc:
+            pytest.fail(f"Failed to delete test graph {self._graph_name!r}: {exc}", pytrace=False)
 
     def make_backend(self) -> FalkorDBGraphBackend:
         return FalkorDBGraphBackend(db=self._shared_db, graph_name=self._graph_name)
