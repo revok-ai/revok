@@ -1,15 +1,10 @@
 # Local development override:
 # - builds revok from source instead of pulling GHCR image
-# - targets Azure Managed Redis from AMS (no local Redis container)
 # Usage: docker compose -f compose.yaml -f compose.local.yaml up --build
 
 services:
-  redis-ams:
-    environment:
-      REDIS_URL: ${AMR_URL}
-
   revok:
     image: ""  # clear the image from compose.yaml
     build:
       context: ../..
-      dockerfile: examples/subscription_demo/Dockerfile.revok
+      dockerfile: examples/mem0_basic/Dockerfile
