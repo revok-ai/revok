@@ -1,0 +1,18 @@
+# syntax=docker/compose
+# Run the Revok server locally.
+# Usage: docker compose up
+# Supply a config file at ./config/revok.yaml (bind-mounted read-only into /config).
+services:
+  revok:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "7771:7771"
+    volumes:
+      - ./config:/config:ro
+      - revok-data:/data
+    restart: unless-stopped
+
+volumes:
+  revok-data:

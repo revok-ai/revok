@@ -196,6 +196,8 @@ class CausalGraphConfig:
     attenuation: float = 0.8
     processing_timeout_seconds: float = 2.0
     relationships: list["CausalRelationshipConfig"] = field(default_factory=list)
+    graph_backend: str = "networkx"
+    graph_backend_db_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -554,6 +556,17 @@ def load_config(path: str) -> Config:
     if not isinstance(cg_timeout, (int, float)) or float(cg_timeout) <= 0.0:
         raise ConfigError("causal_graph.processing_timeout_seconds must be > 0.")
 
+    cg_graph_backend = str(cg_raw.get("graph_backend", "networkx"))
+    if cg_graph_backend not in {"networkx", "falkordb-lite"}:
+        raise ConfigError(
+            'causal_graph.graph_backend must be "networkx" or "falkordb-lite".'
+        )
+    cg_graph_backend_db_path = cg_raw.get("graph_backend_db_path")
+    if cg_graph_backend_db_path is not None and not isinstance(
+        cg_graph_backend_db_path, str
+    ):
+        raise ConfigError("causal_graph.graph_backend_db_path must be a string or null.")
+
     relationships_raw = cg_raw.get("relationships") or []
     if not isinstance(relationships_raw, list):
         raise ConfigError("causal_graph.relationships must be a list.")
@@ -587,6 +600,8 @@ def load_config(path: str) -> Config:
         attenuation=float(cg_attenuation),
         processing_timeout_seconds=float(cg_timeout),
         relationships=relationships,
+        graph_backend=cg_graph_backend,
+        graph_backend_db_path=cg_graph_backend_db_path,
     )
 
     # --- state_store ---

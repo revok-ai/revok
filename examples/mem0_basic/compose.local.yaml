@@ -1,0 +1,10 @@
+# Local development override:
+# - builds revok from source instead of pulling GHCR image
+# Usage: docker compose -f compose.yaml -f compose.local.yaml up --build
+
+services:
+  revok:
+    image: ""  # clear the image from compose.yaml
+    build:
+      context: ../..
+      dockerfile: examples/mem0_basic/Dockerfile
