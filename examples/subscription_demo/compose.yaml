@@ -27,13 +27,14 @@ services:
       retries: 20
 
   revok:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ${REVOK_IMAGE:-ghcr.io/revok-ai/revok:latest}
     ports:
       - "${REVOK_PORT:-7771}:7771"
     volumes:
-      - ./revok.yaml:/config/revok.yaml:ro
+      # Switch backend by changing REVOK_CONFIG_FILE in .env
+      # (default: revok.yaml, optional: revok.falkordb.yaml).
+      - ./${REVOK_CONFIG_FILE:-revok.yaml}:/config/revok.yaml:ro
+      - revok_data:/data
     depends_on:
       redis-ams:
         condition: service_healthy
@@ -82,5 +83,6 @@ services:
       - api
 
 volumes:
+  revok_data:
   dashboard_node_modules:
   dashboard_next_cache:

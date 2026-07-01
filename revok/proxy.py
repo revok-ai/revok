@@ -29,7 +29,7 @@ import dataclasses
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 import aiohttp.hdrs
@@ -37,10 +37,10 @@ import aiohttp.web
 
 from revok.adapters import AdapterClass, _REGISTRY, build_adapter
 from revok.causal_graph import CausalGraph
-from revok.config import Config
+from revok.config import CausalGraphConfig, Config
 from revok.entity_matcher import EntityMatcher
 from revok.inspector import EntityNotFoundError, RevokInspector
-from revok.interfaces import StateStore
+from revok.interfaces import GraphBackend, GraphReader, StateStore
 from revok.metadata_writer import enrich
 from revok.models import Signal
 from revok.scoring import ScoringEngine
@@ -67,6 +67,14 @@ _HOP_BY_HOP: frozenset[str] = frozenset(
 SIGNAL_PROCESSOR_TASK_KEY: aiohttp.web.AppKey[asyncio.Task[Any] | None] = (
     aiohttp.web.AppKey("signal_processor_task")
 )
+
+
+def _build_graph(cfg: CausalGraphConfig) -> GraphBackend:
+    if cfg.graph_backend == "falkordb-lite":
+        from revok.falkordb_backend import FalkorDBGraphBackend
+
+        return FalkorDBGraphBackend(dbfilename=cfg.graph_backend_db_path)
+    return CausalGraph()
 
 
 def build_app(
@@ -109,7 +117,7 @@ def build_app(
     adapter_cls: AdapterClass = _REGISTRY[config.adapter_type]
 
     _bus = bus if bus is not None else AsyncioQueueBus()
-    graph: CausalGraph = CausalGraph()
+    graph: GraphBackend = _build_graph(config.causal_graph)
     for rel in config.causal_graph.relationships:
         graph.add_relation(rel.source, rel.target, rel.weight)
 
@@ -128,7 +136,7 @@ def build_app(
         config.causal_graph,
         history=history,
     )
-    inspector = RevokInspector(store, graph, history)
+    inspector = RevokInspector(store, cast(GraphReader, graph), history)
 
     async def _handle_get_inspector_entity(
         request: aiohttp.web.Request,
@@ -453,7 +461,10 @@ def build_app(
                 pass
         if history is not None:
             await history.close()
-
+        try:
+            graph.close()
+        except Exception:
+            logger.exception("Failed to close graph backend")
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     app.router.add_get("/v1/entities/{entity_key}", _handle_get_entity)

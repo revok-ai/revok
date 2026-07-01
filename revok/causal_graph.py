@@ -198,6 +198,9 @@ class CausalGraph(GraphBackend, GraphReader):
             raise KeyError(f"No edge from {source_id!r} to {target_id!r}")
         return float(self._graph[source_id][target_id].get("weight", 1.0))
 
+    def close(self) -> None:
+        """No-op — NetworkX graphs hold no external resources."""
+
     def node_score(self, entity_id: str) -> float:
         """Return the last score recorded for an entity node.
 

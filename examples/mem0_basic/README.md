@@ -24,10 +24,23 @@ Copy-Item .env.example .env   # Windows PowerShell
 
 Then edit `.env` — find the values in **Azure AI Foundry → your project → Settings → API keys**.
 
-## Step 2 — Build images and start services
+Optional backend toggle for Revok in this demo:
+
+- Default (NetworkX): leave `REVOK_CONFIG_FILE` unset (uses `revok.yaml`)
+- FalkorDB Lite: set `REVOK_CONFIG_FILE=revok.falkordb.yaml`
+
+## Step 2 — Start services
 
 ```bash
 docker compose up --build -d
+```
+
+The default flow pulls Revok from GHCR (`ghcr.io/revok-ai/revok:latest`).
+
+Local Revok source build override:
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml up --build -d
 ```
 
 This starts three containers:

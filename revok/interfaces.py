@@ -303,6 +303,15 @@ class GraphBackend(Protocol):
         """
         ...
 
+    def close(self) -> None:
+        """Release any resources held by this backend.
+
+        Must be idempotent — safe to call multiple times.
+        No-op for in-memory backends; shuts down managed processes for
+        backends that own external resources.
+        """
+        ...
+
 
 @runtime_checkable
 class SignalHistoryStore(Protocol):
