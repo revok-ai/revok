@@ -461,8 +461,10 @@ def build_app(
                 pass
         if history is not None:
             await history.close()
-        graph.close()
-
+        try:
+            graph.close()
+        except Exception:
+            logger.exception("Failed to close graph backend")
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     app.router.add_get("/v1/entities/{entity_key}", _handle_get_entity)
