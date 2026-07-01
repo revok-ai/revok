@@ -83,6 +83,14 @@ AZURE_OPENAI_API_VERSION=2025-04-01-preview
 # OPENAI_API_KEY=sk-...
 ```
 
+Optional backend toggle for Revok in this demo:
+
+- Default (NetworkX): leave `REVOK_CONFIG_FILE` unset (uses `revok.yaml`)
+- FalkorDB Lite: set `REVOK_CONFIG_FILE=revok.falkordb.yaml`
+
+If you enable Falkor mode and your pulled image does not include Falkor extras,
+run with `compose.local.yaml` so Revok is built locally.
+
 > **Note:** `AMR_URL` must be a `rediss://` (TLS) connection string.
 > Plain `redis://` connections are rejected by Azure Managed Redis.
 
@@ -90,6 +98,12 @@ AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 ```bash
 docker compose up --build
+```
+
+Local Revok build (instead of published image):
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml up --build
 ```
 
 Services:
@@ -275,6 +289,14 @@ AZURE_OPENAI_API_VERSION=2025-04-01-preview
 # OPENAI_API_KEY=sk-...
 ```
 
+Optional backend toggle for Revok in this demo:
+
+- Default (NetworkX): leave `REVOK_CONFIG_FILE` unset (uses `revok.yaml`)
+- FalkorDB Lite: set `REVOK_CONFIG_FILE=revok.falkordb.yaml`
+
+If you enable Falkor mode and your pulled image does not include Falkor extras,
+run with `compose.local.yaml` so Revok is built locally.
+
 > **Note:** `AMR_URL` must be a `rediss://` (TLS) connection string.
 > Plain `redis://` connections are rejected by Azure Managed Redis.
 
@@ -282,6 +304,12 @@ AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 ```bash
 docker compose up --build
+```
+
+Local Revok build (instead of published image):
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml up --build
 ```
 
 Services:
