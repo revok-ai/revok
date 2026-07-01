@@ -8,7 +8,7 @@ change fires an invalidation signal, and Revok shows the confidence score has de
 
 - Docker Desktop (or Docker Engine + Compose plugin)
 - An Azure OpenAI resource (or Azure AI Foundry project) with two deployed models:
-  - A chat model, e.g. `gpt-4o-mini`
+  - A chat model, e.g. `gpt-5-mini`
   - An embeddings model, e.g. `text-embedding-3-small`
 
 ## Step 1 — Configure your Azure OpenAI credentials

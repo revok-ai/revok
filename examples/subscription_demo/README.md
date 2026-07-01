@@ -75,13 +75,21 @@ AMR_URL=rediss://:<password>@<hostname>.redis.cache.windows.net:6380
 # Required — Azure OpenAI (Option A, recommended)
 AZURE_OPENAI_API_KEY=your-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com
-AZURE_OPENAI_LLM_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_LLM_DEPLOYMENT=gpt-5-mini
 AZURE_OPENAI_EMBEDDER_DEPLOYMENT=text-embedding-ada-002
 AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 # Or plain OpenAI (Option B)
 # OPENAI_API_KEY=sk-...
 ```
+
+Optional backend toggle for Revok in this demo:
+
+- Default (NetworkX): leave `REVOK_CONFIG_FILE` unset (uses `revok.yaml`)
+- FalkorDB Lite: set `REVOK_CONFIG_FILE=revok.falkordb.yaml`
+
+If you enable Falkor mode and your pulled image does not include Falkor extras,
+run with `compose.local.yaml` so Revok is built locally.
 
 > **Note:** `AMR_URL` must be a `rediss://` (TLS) connection string.
 > Plain `redis://` connections are rejected by Azure Managed Redis.
@@ -90,6 +98,12 @@ AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 ```bash
 docker compose up --build
+```
+
+Local Revok build (instead of published image):
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml up --build
 ```
 
 Services:
@@ -267,13 +281,21 @@ AMR_URL=rediss://:<password>@<hostname>.redis.cache.windows.net:6380
 # Required — Azure OpenAI (Option A, recommended)
 AZURE_OPENAI_API_KEY=your-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com
-AZURE_OPENAI_LLM_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_LLM_DEPLOYMENT=gpt-5-mini
 AZURE_OPENAI_EMBEDDER_DEPLOYMENT=text-embedding-ada-002
 AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 # Or plain OpenAI (Option B)
 # OPENAI_API_KEY=sk-...
 ```
+
+Optional backend toggle for Revok in this demo:
+
+- Default (NetworkX): leave `REVOK_CONFIG_FILE` unset (uses `revok.yaml`)
+- FalkorDB Lite: set `REVOK_CONFIG_FILE=revok.falkordb.yaml`
+
+If you enable Falkor mode and your pulled image does not include Falkor extras,
+run with `compose.local.yaml` so Revok is built locally.
 
 > **Note:** `AMR_URL` must be a `rediss://` (TLS) connection string.
 > Plain `redis://` connections are rejected by Azure Managed Redis.
@@ -282,6 +304,12 @@ AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
 ```bash
 docker compose up --build
+```
+
+Local Revok build (instead of published image):
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml up --build
 ```
 
 Services:

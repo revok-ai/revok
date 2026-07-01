@@ -75,14 +75,16 @@ def _build_client() -> OpenAIChatCompletionClient:
     az_key = os.getenv("AZURE_OPENAI_API_KEY", "")
     az_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     if az_key and az_endpoint:
+        endpoint = az_endpoint.rstrip("/")
+        if endpoint.lower().endswith("/openai/v1"):
+            endpoint = endpoint[: -len("/openai/v1")]
         return OpenAIChatCompletionClient(
-            model=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini"),
-            azure_endpoint=az_endpoint.rstrip("/"),
+            model=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-5-mini"),
             api_key=az_key,
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+            base_url=f"{endpoint}/openai/v1",
         )
     return OpenAIChatCompletionClient(
-        model=os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini"),
+        model=os.getenv("OPENAI_LLM_MODEL", "gpt-5-mini"),
         api_key=os.getenv("OPENAI_API_KEY", ""),
     )
 
