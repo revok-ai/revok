@@ -82,6 +82,7 @@ class FalkorDBGraphBackend(GraphBackend, GraphReader):
         else:
             self._db = _FalkorDB(dbfilename)
             self._owns_db = True
+        self._closed = False
         self._graph = self._db.select_graph(graph_name)
 
     # ------------------------------------------------------------------
@@ -250,5 +251,8 @@ class FalkorDBGraphBackend(GraphBackend, GraphReader):
         No-op when this instance was constructed with an injected ``db``
         (the caller owns the lifecycle in that case).
         """
+        if self._closed:
+            return
+        self._closed = True
         if self._owns_db:
             self._db.close()
