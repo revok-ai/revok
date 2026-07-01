@@ -75,7 +75,7 @@ AMR_URL=rediss://:<password>@<hostname>.redis.cache.windows.net:6380
 # Required — Azure OpenAI (Option A, recommended)
 AZURE_OPENAI_API_KEY=your-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com
-AZURE_OPENAI_LLM_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_LLM_DEPLOYMENT=gpt-5-mini
 AZURE_OPENAI_EMBEDDER_DEPLOYMENT=text-embedding-ada-002
 AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
@@ -281,7 +281,7 @@ AMR_URL=rediss://:<password>@<hostname>.redis.cache.windows.net:6380
 # Required — Azure OpenAI (Option A, recommended)
 AZURE_OPENAI_API_KEY=your-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com
-AZURE_OPENAI_LLM_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_LLM_DEPLOYMENT=gpt-5-mini
 AZURE_OPENAI_EMBEDDER_DEPLOYMENT=text-embedding-ada-002
 AZURE_OPENAI_API_VERSION=2025-04-01-preview
 
