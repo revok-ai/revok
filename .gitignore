@@ -232,6 +232,8 @@ examples/subscription_demo/demo_state.json
 
 # Example runtime / generated files
 *.db
+*.db-wal
+*.db-shm
 demo_state.json
 /TASKS.md
 # Claude Code local context (do not commit — internal strategy/IP)

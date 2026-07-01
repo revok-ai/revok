@@ -28,6 +28,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+from pathlib import Path
 import time
 from typing import Any, cast
 
@@ -311,6 +312,13 @@ def build_app(
             body=json.dumps(dataclasses.asdict(topology)).encode(),
         )
 
+    async def _handle_get_inspector_viewer(
+        _: aiohttp.web.Request,
+    ) -> aiohttp.web.FileResponse:
+        """GET /inspector — serve the read-only inspector placeholder page."""
+        inspector_index = Path(__file__).parent / "inspector" / "index.html"
+        return aiohttp.web.FileResponse(path=inspector_index)
+
     async def _handle_get_entity(
         request: aiohttp.web.Request,
     ) -> aiohttp.web.Response:
@@ -537,6 +545,7 @@ def build_app(
         _handle_get_inspector_signals,
     )
     app.router.add_get("/v1/inspector/graph", _handle_get_inspector_graph)
+    app.router.add_get("/inspector", _handle_get_inspector_viewer)
     app.router.add_post("/signals", _handle_signal)
     app.router.add_route(aiohttp.hdrs.METH_ANY, "/{path_info:.*}", _handle)
     return app
