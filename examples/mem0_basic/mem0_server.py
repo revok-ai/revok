@@ -19,7 +19,7 @@ Provider selection (checked in order):
 
   Plain OpenAI — set:
     OPENAI_API_KEY                   your OpenAI secret key
-    OPENAI_LLM_MODEL                 (optional, default: gpt-4o-mini)
+        OPENAI_LLM_MODEL                 (optional, default: gpt-5-mini)
     OPENAI_EMBEDDER_MODEL            (optional, default: text-embedding-3-small)
 
   Common:
@@ -56,7 +56,7 @@ _AZURE_API_VERSION: str = os.environ.get(
     "AZURE_OPENAI_API_VERSION", "2025-04-01-preview"
 )
 _AZURE_LLM_DEPLOYMENT: str = os.environ.get(
-    "AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini"
+    "AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-5-mini"
 )
 _AZURE_LLM_API_VERSION: str = os.environ.get(
     "AZURE_OPENAI_LLM_API_VERSION", _AZURE_API_VERSION
@@ -70,7 +70,7 @@ _AZURE_EMBEDDER_API_VERSION: str = os.environ.get(
 
 # Plain OpenAI
 _OPENAI_KEY: str = os.environ.get("OPENAI_API_KEY", "")
-_OPENAI_LLM_MODEL: str = os.environ.get("OPENAI_LLM_MODEL", "gpt-4o-mini")
+_OPENAI_LLM_MODEL: str = os.environ.get("OPENAI_LLM_MODEL", "gpt-5-mini")
 _OPENAI_EMBEDDER_MODEL: str = os.environ.get(
     "OPENAI_EMBEDDER_MODEL", "text-embedding-3-small"
 )

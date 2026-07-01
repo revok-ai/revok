@@ -78,27 +78,10 @@ def _build_client() -> OpenAIChatCompletionClient:
         endpoint = az_endpoint.rstrip("/")
         if endpoint.lower().endswith("/openai/v1"):
             endpoint = endpoint[: -len("/openai/v1")]
-        use_v1 = os.getenv("AZURE_OPENAI_USE_V1", "true").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-
-        # Prefer Azure OpenAI v1-style base_url routing for modern deployments.
-        if use_v1:
-            return OpenAIChatCompletionClient(
-                model=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-5-mini"),
-                api_key=az_key,
-                base_url=f"{endpoint}/openai/v1",
-            )
-
-        # Legacy deployment route support can be forced via AZURE_OPENAI_USE_V1=false.
         return OpenAIChatCompletionClient(
             model=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-5-mini"),
-            azure_endpoint=endpoint,
             api_key=az_key,
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+            base_url=f"{endpoint}/openai/v1",
         )
     return OpenAIChatCompletionClient(
         model=os.getenv("OPENAI_LLM_MODEL", "gpt-5-mini"),
