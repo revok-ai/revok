@@ -216,3 +216,12 @@ class CausalGraph(GraphBackend, GraphReader):
         if not self._graph.has_node(entity_id):
             raise KeyError(f"No node {entity_id!r}")
         return float(self._graph.nodes[entity_id].get("score", 0.0))
+
+    def nodes(self) -> list[str]:
+        """Return all entity keys present in the graph.
+
+        Returns:
+            Unordered list of all entity keys. Includes isolated nodes and
+            target-only keys. Returns ``[]`` for an empty graph.
+        """
+        return list(self._graph.nodes())

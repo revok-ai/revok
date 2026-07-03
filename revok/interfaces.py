@@ -263,6 +263,20 @@ class GraphReader(Protocol):
         """
         ...
 
+    def nodes(self) -> list[str]:
+        """Return all entity keys present in the causal graph.
+
+        Returns:
+            Unordered list of all entity keys. Includes isolated nodes
+            (nodes with no edges) and nodes that appear only as relation
+            targets. Returns ``[]`` for an empty graph. Never raises.
+
+        Note:
+            Callers MUST treat the result as unordered.
+            The result is graph-derived and does not depend on the state store.
+        """
+        ...
+
 
 @runtime_checkable
 class GraphBackend(Protocol):

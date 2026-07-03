@@ -241,6 +241,19 @@ class FalkorDBGraphBackend(GraphBackend, GraphReader):
             raise KeyError(f"No node {entity_id!r}")
         return float(result.result_set[0][0])
 
+    def nodes(self) -> list[str]:
+        """Return all entity keys present in the graph.
+
+        Executes ``MATCH (n:Entity) RETURN n.id`` to retrieve all entity
+        nodes, including isolated ones (no :CAUSES edges).
+
+        Returns:
+            Unordered list of all entity keys. Returns ``[]`` for an empty
+            graph.
+        """
+        result = self._graph.query("MATCH (n:Entity) RETURN n.id")
+        return [row[0] for row in result.result_set]
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

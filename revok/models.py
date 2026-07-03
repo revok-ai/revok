@@ -287,3 +287,52 @@ class SignalRecord:
     score_after: float
     is_propagated: bool
     upstream_source: str | None
+
+
+# ---------------------------------------------------------------------------
+# Graph topology dataclasses (Feature 007)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GraphNodeView:
+    """A node entry in the graph topology response.
+
+    Attributes:
+        key: Normalized entity identifier.
+        score: Resolved live score (decay_at > node_score > 1.0 fallback).
+    """
+
+    key: str
+    score: float
+
+
+@dataclass(frozen=True)
+class GraphEdgeView:
+    """A directed edge entry in the graph topology response.
+
+    Attributes:
+        source: Source entity key (tail of directed edge).
+        target: Target entity key (head of directed edge).
+        weight: Edge propagation weight in (0, 1].
+    """
+
+    source: str
+    target: str
+    weight: float
+
+
+@dataclass(frozen=True)
+class GraphTopologyResponse:
+    """Complete graph topology snapshot for GET /v1/inspector/graph.
+
+    Both ``nodes`` and ``edges`` are derived from a single synchronous
+    graph.nodes() snapshot before any await (FR-016).
+
+    Attributes:
+        nodes: All graph nodes with resolved live scores.
+        edges: All directed edges, enumerated over snapshot keys only.
+    """
+
+    nodes: list[GraphNodeView]
+    edges: list[GraphEdgeView]
