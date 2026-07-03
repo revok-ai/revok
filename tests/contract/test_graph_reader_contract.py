@@ -101,3 +101,32 @@ class GraphReaderContract:
         assert "a" not in out
         assert "b" in out
         assert "c" in out
+
+    # ------------------------------------------------------------------
+    # GraphReader — nodes() enumeration (Feature 007)
+    # ------------------------------------------------------------------
+
+    def test_nodes_empty_graph(self) -> None:
+        g = self.make_backend()
+        assert g.nodes() == []
+
+    def test_nodes_includes_target_only(self) -> None:
+        g = self.make_backend()
+        g.add_relation("src", "tgt", 1.0)
+        result = set(g.nodes())
+        assert "src" in result
+        assert "tgt" in result
+
+    def test_nodes_includes_isolated(self) -> None:
+        g = self.make_backend()
+        g.add_entity("isolated", 0.5)
+        assert "isolated" in set(g.nodes())
+
+    def test_nodes_no_duplicates(self) -> None:
+        g = self.make_backend()
+        g.add_relation("a", "b", 0.5)
+        g.add_relation("a", "c", 0.5)
+        g.add_relation("b", "c", 0.5)
+        result = g.nodes()
+        assert len(result) == len(set(result))
+        assert set(result) == {"a", "b", "c"}

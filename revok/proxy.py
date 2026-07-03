@@ -42,7 +42,12 @@ from revok.entity_matcher import EntityMatcher
 from revok.inspector import EntityNotFoundError, RevokInspector
 from revok.interfaces import GraphBackend, GraphReader, StateStore
 from revok.metadata_writer import enrich
-from revok.models import Signal
+from revok.models import (
+    GraphEdgeView,
+    GraphNodeView,
+    GraphTopologyResponse,
+    Signal,
+)
 from revok.scoring import ScoringEngine
 from revok.signal_history import SqliteSignalHistoryStore
 from revok.signal_processor import SignalProcessor
@@ -256,6 +261,54 @@ def build_app(
             status=200,
             content_type="application/json",
             body=json.dumps(data).encode(),
+        )
+
+    async def _handle_get_inspector_graph(
+        request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        """GET /v1/inspector/graph — full causal graph topology snapshot."""
+        if not config.inspector.enabled:
+            return aiohttp.web.Response(
+                status=503,
+                content_type="application/json",
+                body=json.dumps({"error": "inspector_disabled"}).encode(),
+            )
+        _reader = cast(GraphReader, graph)
+
+        # FR-016: Synchronous snapshot — materialize nodes AND edges before any await.
+        # No coroutine can mutate the graph between these synchronous calls.
+        snapshot_keys = _reader.nodes()
+        snapshot_key_set = set(snapshot_keys)
+        edges_raw: list[GraphEdgeView] = []
+        for src in snapshot_keys:
+            for tgt in _reader.successors(src):
+                if tgt not in snapshot_key_set:
+                    continue  # edge to key added after snapshot — skip
+                try:
+                    w = _reader.edge_weight(src, tgt)
+                except KeyError:
+                    continue
+                edges_raw.append(GraphEdgeView(source=src, target=tgt, weight=w))
+
+        # Async score resolution over frozen node list (FR-014 priority chain)
+        nodes: list[GraphNodeView] = []
+        now = time.time()
+        for key in snapshot_keys:
+            record = await store.get(key)
+            if record is not None:
+                resolved_score = scorer.decay_at(record, now)
+            else:
+                try:
+                    resolved_score = _reader.node_score(key)
+                except KeyError:
+                    resolved_score = 1.0
+            nodes.append(GraphNodeView(key=key, score=resolved_score))
+
+        topology = GraphTopologyResponse(nodes=nodes, edges=edges_raw)
+        return aiohttp.web.Response(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(dataclasses.asdict(topology)).encode(),
         )
 
     async def _handle_get_entity(
@@ -483,6 +536,7 @@ def build_app(
         "/v1/inspector/entities/{entity_key}/signals",
         _handle_get_inspector_signals,
     )
+    app.router.add_get("/v1/inspector/graph", _handle_get_inspector_graph)
     app.router.add_post("/signals", _handle_signal)
     app.router.add_route(aiohttp.hdrs.METH_ANY, "/{path_info:.*}", _handle)
     return app

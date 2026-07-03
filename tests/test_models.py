@@ -14,6 +14,9 @@ from revok.models import (
     EntityRecord,
     MemoryAdapterResponse,
     Signal,
+    GraphNodeView,
+    GraphEdgeView,
+    GraphTopologyResponse,
 )
 
 
@@ -196,3 +199,44 @@ class TestMemoryAdapterResponse:
     def test_is_error_false_for_2xx(self):
         resp = MemoryAdapterResponse(status=200, body=b"ok", headers={}, is_error=False)
         assert resp.is_error is False
+
+
+# ---------------------------------------------------------------------------
+# Feature 007: GraphNodeView, GraphEdgeView, GraphTopologyResponse
+# ---------------------------------------------------------------------------
+
+
+class TestGraphNodeView:
+    def test_graph_node_view_construction(self):
+        node = GraphNodeView(key="alice", score=0.75)
+        assert node.key == "alice"
+        assert node.score == pytest.approx(0.75)
+
+    def test_graph_node_view_frozen(self):
+        node = GraphNodeView(key="alice", score=0.75)
+        with pytest.raises((AttributeError, TypeError)):
+            node.key = "bob"  # type: ignore[misc]
+
+
+class TestGraphEdgeView:
+    def test_graph_edge_view_construction(self):
+        edge = GraphEdgeView(source="a", target="b", weight=0.5)
+        assert edge.source == "a"
+        assert edge.target == "b"
+        assert edge.weight == pytest.approx(0.5)
+
+    def test_graph_edge_view_frozen(self):
+        edge = GraphEdgeView(source="a", target="b", weight=0.5)
+        with pytest.raises((AttributeError, TypeError)):
+            edge.source = "x"  # type: ignore[misc]
+
+
+class TestGraphTopologyResponse:
+    def test_graph_topology_response_construction(self):
+        nodes = [GraphNodeView(key="a", score=1.0), GraphNodeView(key="b", score=0.5)]
+        edges = [GraphEdgeView(source="a", target="b", weight=0.8)]
+        resp = GraphTopologyResponse(nodes=nodes, edges=edges)
+        assert len(resp.nodes) == 2
+        assert len(resp.edges) == 1
+        assert resp.nodes[0].key == "a"
+        assert resp.edges[0].source == "a"

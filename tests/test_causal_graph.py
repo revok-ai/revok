@@ -291,3 +291,22 @@ class TestCausalGraphContract(GraphReaderContract):
 
     def make_backend(self) -> CausalGraph:
         return CausalGraph()
+
+
+# ---------------------------------------------------------------------------
+# Feature 007: nodes() unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestNodes:
+    def test_nodes_returns_list_of_str(self):
+        g = CausalGraph()
+        g.add_relation("x", "y", 0.5)
+        result = g.nodes()
+        assert isinstance(result, list)
+        assert all(isinstance(k, str) for k in result)
+
+    def test_nodes_after_add_entity(self):
+        g = CausalGraph()
+        g.add_entity("standalone", 0.9)
+        assert "standalone" in g.nodes()
