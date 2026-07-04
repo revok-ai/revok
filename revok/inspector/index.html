@@ -769,7 +769,7 @@
             const maxHop = Object.values(hopMap).reduce((m, h) => Math.max(m, h), 0);
             for (let hop = 0; hop <= maxHop; hop++) {
               const ids = Object.entries(hopMap).filter(([, h]) => h === hop).map(([id]) => id);
-              setTimeout(() => ids.forEach(applyNode), hop * CASCADE_HOP_MS);
+              setTimeout(() => { if (token === _cascadeToken) ids.forEach(applyNode); }, hop * CASCADE_HOP_MS);
             }
           }
         }
