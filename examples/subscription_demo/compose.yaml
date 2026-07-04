@@ -38,6 +38,9 @@ services:
     depends_on:
       redis-ams:
         condition: service_healthy
+    environment:
+      REVOK_DEMO_AUTH_USER: ${REVOK_DEMO_AUTH_USER:-}
+      REVOK_DEMO_AUTH_PASS: ${REVOK_DEMO_AUTH_PASS:-}
 
   api:
     build:

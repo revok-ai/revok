@@ -25,9 +25,12 @@ the configured Mem0 upstream.
 from __future__ import annotations
 
 import asyncio
+import base64
 import dataclasses
+import hmac
 import json
 import logging
+import os
 from pathlib import Path
 import time
 from typing import Any, cast
@@ -82,6 +85,38 @@ def _build_graph(cfg: CausalGraphConfig) -> GraphBackend:
         return FalkorDBGraphBackend(dbfilename=cfg.graph_backend_db_path)
     return CausalGraph()
 
+@aiohttp.web.middleware
+async def basic_auth_middleware(
+    request: aiohttp.web.Request, handler: Any
+) -> aiohttp.web.Response:
+    """Optional HTTP basic auth, enabled only when both env vars are set.
+
+    Used to gate the demo deployment; a no-op passthrough for local/OSS use
+    where REVOK_DEMO_AUTH_USER / REVOK_DEMO_AUTH_PASS are unset.
+    """
+
+    user = os.environ.get("REVOK_DEMO_AUTH_USER")
+    password = os.environ.get("REVOK_DEMO_AUTH_PASS")
+    if not user or not password:
+        return await handler(request)
+
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(header[6:]).decode("utf-8")
+            req_user, _, req_pass = decoded.partition(":")
+            if hmac.compare_digest(req_user, user) and hmac.compare_digest(
+                req_pass, password
+            ):
+                return await handler(request)
+        except Exception:
+            pass
+
+    return aiohttp.web.Response(
+        status=401,
+        headers={"WWW-Authenticate": 'Basic realm="Revok Demo"'},
+        body=b"Authentication required",
+    )
 
 def build_app(
     config: Config,
@@ -506,7 +541,7 @@ def build_app(
             headers=safe_headers,
         )
 
-    app = aiohttp.web.Application()
+    app = aiohttp.web.Application(middlewares=[basic_auth_middleware])
     app[SIGNAL_PROCESSOR_TASK_KEY] = None
 
     async def _on_startup(_: aiohttp.web.Application) -> None:
