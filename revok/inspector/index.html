@@ -523,6 +523,7 @@
         let cy           = null;
         let _firstRender = true;
         const _keyLabels = {};  // nodeId → DOM <div>
+        let _cascadeToken = 0;
 
         // ── DOM refs ────────────────────────────────────────────────
         const overlayWaiting  = document.getElementById('overlay-waiting');
