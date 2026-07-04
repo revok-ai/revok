@@ -317,6 +317,8 @@ def build_app(
     ) -> aiohttp.web.FileResponse:
         """GET /inspector — serve the read-only inspector placeholder page."""
         inspector_index = Path(__file__).parent / "inspector" / "index.html"
+        if not inspector_index.is_file():
+            raise aiohttp.web.HTTPNotFound()
         return aiohttp.web.FileResponse(path=inspector_index)
 
     async def _handle_get_entity(
