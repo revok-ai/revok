@@ -716,7 +716,7 @@
          */
         function animateCascade(droppedKeys, scoreMap) {
           if (!cy || !droppedKeys.length) return;
-
+          const token = ++_cascadeToken;
           // BFS hop distances using cy topology
           const hopMap = {};
           droppedKeys.forEach(k => { hopMap[k] = 0; });
