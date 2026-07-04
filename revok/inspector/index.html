@@ -388,9 +388,9 @@
         function _notify() {
           const snapshot = Object.freeze({
             status: _state.status,
-            nodes: _state.nodes,
-            edges: _state.edges,
-            prevScores: _state.prevScores,
+            nodes: Object.freeze(_state.nodes.map((n) => Object.freeze({ ...n }))),
+            edges: Object.freeze(_state.edges.map((e) => Object.freeze({ ...e }))),
+            prevScores: Object.freeze({ ..._state.prevScores }),
             updatedAt: _state.updatedAt,
           });
           _subscribers.forEach((fn) => {
