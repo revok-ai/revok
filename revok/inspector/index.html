@@ -3,24 +3,1074 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>revok inspector</title>
+    <title>Revok Inspector</title>
+    
     <style>
+      @font-face { font-family:'Syne'; font-weight:400; font-display:swap;
+  src:url('/inspector/vendor/fonts/syne-400.woff2') format('woff2'); }
+@font-face { font-family:'Syne'; font-weight:700; font-display:swap;
+  src:url('/inspector/vendor/fonts/syne-700.woff2') format('woff2'); }
+@font-face { font-family:'IBM Plex Mono'; font-weight:400; font-display:swap;
+  src:url('/inspector/vendor/fonts/plex-mono-400.woff2') format('woff2'); }
+@font-face { font-family:'IBM Plex Mono'; font-weight:700; font-display:swap;
+  src:url('/inspector/vendor/fonts/plex-mono-700.woff2') format('woff2'); }
+      *, *::before, *::after { box-sizing: border-box; }
+
       :root {
         color-scheme: dark;
+        --bg:       #0D0900;
+        --fg:       #FF8C00;
+        --fg-muted: rgba(255,140,0,0.35);
+        --mono:     'IBM Plex Mono', ui-monospace, monospace;
+        --sans:     'Syne', system-ui, sans-serif;
       }
 
-      body {
+      html, body {
         margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        background: #0D0900;
-        color: #FF8C00;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        padding: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--sans);
       }
+
+      body { display: flex; flex-direction: column; overflow-y: auto; }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.6rem 1.2rem;
+        border-bottom: 1px solid rgba(255,140,0,0.1);
+        flex-shrink: 0;
+      }
+
+      .header-title {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        opacity: 0.5;
+        margin: 0;
+      }
+
+      .header-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .legend {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-family: var(--mono);
+        font-size: 0.6rem;
+        opacity: 0.4;
+      }
+
+      .legend-bar {
+        width: 56px;
+        height: 5px;
+        border-radius: 2px;
+        background: linear-gradient(to right, #DC143C, #CC5200, #FF8C00);
+      }
+
+      #btn-reset {
+        background: transparent;
+        border: 1px solid rgba(255,140,0,0.3);
+        color: var(--fg);
+        font-family: var(--mono);
+        font-size: 0.6rem;
+        letter-spacing: 0.08em;
+        padding: 0.2rem 0.5rem;
+        border-radius: 3px;
+        cursor: pointer;
+        opacity: 0.45;
+        transition: opacity 0.15s;
+      }
+      #btn-reset:hover { opacity: 1; }
+
+      #cy-wrap {
+        flex: 0 0 58vh;
+        position: relative;
+        min-height: 320px;
+      }
+
+      #cy {
+        position: absolute;
+        inset: 0;
+        background: var(--bg);
+      }
+
+      .status-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        pointer-events: none;
+      }
+
+      .status-overlay.hidden { display: none; }
+
+      .status-icon {
+        font-size: 1.25rem;
+        opacity: 0.25;
+      }
+
+      .status-text {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        opacity: 0.25;
+        letter-spacing: 0.05em;
+      }
+
+      #overlay-disabled .status-icon,
+      #overlay-disabled .status-text { opacity: 0.45; }
+
+      /* ── Secondary views: timeline + entity table ────────────────── */
+
+      #views-wrap {
+        display: grid;
+        grid-template-columns: minmax(320px, 1.35fr) minmax(280px, 1fr);
+        gap: 1px;
+        background: rgba(255,140,0,0.08);
+        flex-shrink: 0;
+      }
+
+      @media (max-width: 860px) {
+        #views-wrap { grid-template-columns: 1fr; }
+      }
+
+      .panel {
+        background: var(--bg);
+        padding: 0.9rem 1.1rem 1.3rem;
+        min-width: 0;
+      }
+
+      .panel-title {
+        font-family: var(--mono);
+        font-size: 0.62rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        opacity: 0.4;
+        margin: 0 0 0.6rem;
+        font-weight: 700;
+      }
+
+      .panel-empty {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        opacity: 0.3;
+        padding: 0.3rem 0 0.1rem;
+      }
+      .panel-empty.hidden { display: none; }
+
+      /* Timeline */
+      #timeline-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        max-height: 360px;
+        overflow-y: auto;
+      }
+
+      .timeline-entry {
+        padding: 0.5rem 0;
+        border-bottom: 1px solid rgba(255,140,0,0.08);
+      }
+      .timeline-entry:first-child { padding-top: 0; }
+      .timeline-entry:last-child { border-bottom: none; }
+
+      .timeline-head {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+        margin-bottom: 0.35rem;
+      }
+
+      .timeline-time {
+        font-family: var(--mono);
+        font-size: 0.6rem;
+        opacity: 0.35;
+        flex-shrink: 0;
+      }
+
+      .timeline-summary {
+        font-family: var(--sans);
+        font-size: 0.72rem;
+        font-weight: 700;
+        opacity: 0.85;
+      }
+
+      .timeline-deltas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem 0.9rem;
+      }
+
+      .timeline-delta {
+        display: flex;
+        align-items: baseline;
+        gap: 0.4rem;
+        font-family: var(--mono);
+        font-size: 0.65rem;
+      }
+
+      .timeline-delta-key { opacity: 0.55; }
+      .timeline-delta-val { font-weight: 700; white-space: nowrap; }
+
+      /* Entity table */
+      #entity-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: var(--mono);
+        font-size: 0.7rem;
+      }
+
+      #entity-table thead th {
+        text-align: left;
+        font-size: 0.6rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        opacity: 0.35;
+        font-weight: 700;
+        padding: 0.3rem 0.6rem 0.5rem 0;
+        cursor: pointer;
+        user-select: none;
+        border-bottom: 1px solid rgba(255,140,0,0.15);
+        white-space: nowrap;
+      }
+      #entity-table thead th:hover      { opacity: 0.65; }
+      #entity-table thead th.sort-active { opacity: 0.9; }
+      #entity-table thead th.sort-active::after {
+        margin-left: 0.35rem;
+        font-size: 0.55rem;
+      }
+      #entity-table thead th[data-dir="asc"]::after  { content: '\2191'; }
+      #entity-table thead th[data-dir="desc"]::after { content: '\2193'; }
+
+      #entity-table tbody tr { border-bottom: 1px solid rgba(255,140,0,0.06); }
+      #entity-table tbody tr:last-child { border-bottom: none; }
+      #entity-table tbody td { padding: 0.4rem 0.6rem 0.4rem 0; vertical-align: middle; }
+
+      .entity-key { opacity: 0.75; }
+
+      .entity-score {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .entity-score-val { font-weight: 700; width: 2.6em; flex-shrink: 0; }
+
+      .entity-bar {
+        flex: 1;
+        height: 4px;
+        border-radius: 2px;
+        background: rgba(255,140,0,0.08);
+        overflow: hidden;
+        max-width: 100px;
+      }
+      .entity-bar-fill { height: 100%; border-radius: 2px; }
     </style>
   </head>
   <body>
-    revok inspector - route alive
+    <header>
+      <h1 class="header-title">Revok Inspector</h1>
+      <div class="header-controls">
+        <div class="legend" aria-label="Confidence colour scale">
+          <span>invalid</span>
+          <div class="legend-bar"></div>
+          <span>valid</span>
+        </div>
+        <button id="btn-reset" aria-label="Reset graph view">reset view</button>
+      </div>
+    </header>
+    <div id="cy-wrap">
+      <div id="cy"></div>
+      <div id="overlay-waiting" class="status-overlay">
+        <div class="status-icon">&#x25CC;</div>
+        <div class="status-text">waiting for graph data…</div>
+      </div>
+      <div id="overlay-disabled" class="status-overlay hidden">
+        <div class="status-icon">&#x2298;</div>
+        <div class="status-text">inspector disabled</div>
+      </div>
+    </div>
+    <div id="views-wrap">
+      <section class="panel" id="timeline-panel" aria-label="Signal timeline">
+        <h2 class="panel-title">signal timeline</h2>
+        <div id="timeline-empty" class="panel-empty">no propagation events yet — fire a signal to see invalidation cascade.</div>
+        <ul id="timeline-list"></ul>
+      </section>
+      <section class="panel" id="table-panel" aria-label="Entity table">
+        <h2 class="panel-title">entities</h2>
+        <table id="entity-table">
+          <thead>
+            <tr>
+              <th data-sort="key">key</th>
+              <th data-sort="score" data-dir="asc" class="sort-active">confidence</th>
+            </tr>
+          </thead>
+          <tbody id="entity-table-body"></tbody>
+        </table>
+      </section>
+    </div>
+    <!-- Vendored Cytoscape.js — no CDN, no npm -->
+    <script src="/inspector/vendor/cytoscape.min.js"></script>
+    <script>
+      /**
+       * Revok Inspector — polling data layer (no framework, no build step).
+       *
+       * Public API
+       * ----------
+       * RevokGraph.subscribe(fn)   Register a callback invoked on every state update.
+       * RevokGraph.unsubscribe(fn) Remove a previously registered callback.
+       * RevokGraph.getState()      Return the current state snapshot (read-only copy).
+       * RevokGraph.start()         Begin polling (called automatically on DOMContentLoaded).
+       * RevokGraph.stop()          Stop polling.
+       * RevokGraph.roundScore(n)   Round a raw score value for display purposes.
+       */
+      const RevokGraph = (() => {
+        const POLL_INTERVAL_MS = 1500;
+        const ENDPOINT = '/v1/inspector/graph';
+
+        /**
+         * @typedef {{ key: string, score: number }} GraphNode
+         * @typedef {{ source: string, target: string, weight: number }} GraphEdge
+         *
+         * @typedef {Object} GraphState
+         * @property {'ok' | 'disabled' | 'init'} status
+         *   'init'     — no successful poll yet
+         *   'ok'       — last poll succeeded
+         *   'disabled' — last poll returned 503 inspector_disabled
+         * @property {GraphNode[]} nodes       Current node list (empty until first ok poll).
+         * @property {GraphEdge[]} edges       Current edge list (empty until first ok poll).
+         * @property {Object.<string, number>} prevScores
+         *   Node scores from the immediately preceding successful poll, keyed by node key.
+         *   Used to detect nodes whose score dropped since the last update.
+         * @property {number} updatedAt        Timestamp (ms) of last state mutation.
+         */
+
+        /** @type {GraphState} */
+        let _state = {
+          status: 'init',
+          nodes: [],
+          edges: [],
+          prevScores: {},
+          updatedAt: 0,
+        };
+
+        /** @type {Set<Function>} */
+        const _subscribers = new Set();
+
+        let _timerId = null;
+        let _polling = false;
+
+        // ----------------------------------------------------------------
+        // Helpers
+        // ----------------------------------------------------------------
+
+        /**
+         * Round a raw score to 4 decimal places for display.
+         * Raw scores are always kept unrounded in state.
+         * @param {number} score
+         * @returns {number}
+         */
+        function roundScore(score) {
+          return Math.round(score * 10000) / 10000;
+        }
+
+        /** Notify all subscribers with a shallow copy of state. */
+        function _notify() {
+          const snapshot = Object.freeze({
+            status: _state.status,
+            nodes: _state.nodes,
+            edges: _state.edges,
+            prevScores: _state.prevScores,
+            updatedAt: _state.updatedAt,
+          });
+          _subscribers.forEach((fn) => {
+            try { fn(snapshot); } catch (_) { /* subscriber errors must not break polling */ }
+          });
+        }
+
+        // ----------------------------------------------------------------
+        // Polling
+        // ----------------------------------------------------------------
+
+        async function _poll() {
+          let response;
+          try {
+            response = await fetch(ENDPOINT, {
+              method: 'GET',
+              headers: { Accept: 'application/json' },
+            });
+          } catch (_networkErr) {
+            // Network error — keep last good state, retry silently.
+            return;
+          }
+
+          if (response.status === 503) {
+            // Inspector disabled — update status but preserve last node/edge data.
+            _state = {
+              ..._state,
+              status: 'disabled',
+              updatedAt: Date.now(),
+            };
+            _notify();
+            return;
+          }
+
+          if (!response.ok) {
+            // Any other HTTP error — treat like network error, keep last good state.
+            return;
+          }
+
+          let payload;
+          try {
+            payload = await response.json();
+          } catch (_parseErr) {
+            // Malformed JSON — keep last good state.
+            return;
+          }
+
+          const newNodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+          const newEdges = Array.isArray(payload.edges) ? payload.edges : [];
+
+          // Capture previous scores before updating state.
+          const prevScores = {};
+          _state.nodes.forEach(({ key, score }) => { prevScores[key] = score; });
+
+          _state = {
+            status: 'ok',
+            nodes: newNodes,
+            edges: newEdges,
+            prevScores,
+            updatedAt: Date.now(),
+          };
+          _notify();
+        }
+
+        async function _tick() {
+          if (!_polling) return;
+          await _poll();
+          if (_polling) {
+            _timerId = setTimeout(_tick, POLL_INTERVAL_MS);
+          }
+        }
+
+        // ----------------------------------------------------------------
+        // Public API
+        // ----------------------------------------------------------------
+
+        function subscribe(fn) {
+          _subscribers.add(fn);
+        }
+
+        function unsubscribe(fn) {
+          _subscribers.delete(fn);
+        }
+
+        function getState() {
+          return Object.freeze({
+            status: _state.status,
+            nodes: _state.nodes,
+            edges: _state.edges,
+            prevScores: _state.prevScores,
+            updatedAt: _state.updatedAt,
+          });
+        }
+
+        function start() {
+          if (_polling) return;
+          _polling = true;
+          _tick();
+        }
+
+        function stop() {
+          _polling = false;
+          if (_timerId !== null) {
+            clearTimeout(_timerId);
+            _timerId = null;
+          }
+        }
+
+        return { subscribe, unsubscribe, getState, start, stop, roundScore };
+      })();
+
+    </script>
+    <script>
+      /**
+       * Revok Inspector — Cytoscape.js graph renderer.
+       * Subscribes to RevokGraph. Renders a breadthfirst DAG using Cytoscape.js
+       * (loaded from /inspector/vendor/). No CDN, no npm, no build step.
+       *
+       * confColor(score)     → CSS colour: crimson→ember→amber
+       * confFillOpacity(s)   → fill alpha: loud when invalid, quiet when healthy
+       * animateCascade(…)    → depth-staggered recolor from dropped-score nodes
+       */
+      const GraphRenderer = (() => {
+        const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const CASCADE_HOP_MS = 450;
+        const ANIM_DURATION  = 360;
+        const NODE_SIZE      = 72;
+        const MONO           = "'IBM Plex Mono', ui-monospace, monospace";
+
+        let cy           = null;
+        let _firstRender = true;
+        const _keyLabels = {};  // nodeId → DOM <div>
+
+        // ── DOM refs ────────────────────────────────────────────────
+        const overlayWaiting  = document.getElementById('overlay-waiting');
+        const overlayDisabled = document.getElementById('overlay-disabled');
+
+        function _showOverlay(which) {
+          overlayWaiting.classList.toggle('hidden',  which !== 'waiting');
+          overlayDisabled.classList.toggle('hidden', which !== 'disabled');
+        }
+
+        // ── Colour mapping ───────────────────────────────────────────
+
+        /**
+         * confColor(score) → CSS colour.
+         *   0.0  →  #DC143C  (crimson — invalid, loudest)
+         *   0.5  →  #CC5200  (ember)
+         *   1.0  →  #FF8C00  (amber — valid, calm)
+         */
+        function confColor(score) {
+          const s = Math.max(0, Math.min(1, Number.isFinite(score) ? score : 1));
+          if (s >= 0.5) {
+            const t = (s - 0.5) * 2;
+            return `rgb(${Math.round(0xCC + (0xFF - 0xCC) * t)},${Math.round(0x52 + (0x8C - 0x52) * t)},0)`;
+          }
+          const t = s * 2;
+          return `rgb(${Math.round(0xDC + (0xCC - 0xDC) * t)},${Math.round(0x14 + (0x52 - 0x14) * t)},${Math.round(0x3C * (1 - t))})`;
+        }
+
+        /**
+         * Fill opacity: high confidence → ~0.08 (charcoal shows through, node is calm).
+         *               low confidence  → 1.00 (saturated solid, draws the eye).
+         */
+        function confFillOpacity(score) {
+          const s = Math.max(0, Math.min(1, Number.isFinite(score) ? score : 1));
+          return +(1 - s * 0.92).toFixed(3);
+        }
+
+        // ── Key label overlay divs ──────────────────────────────────────
+
+        function _ensureKeyLabel(id, key) {
+          if (_keyLabels[id]) return _keyLabels[id];
+          const el = document.createElement('div');
+          el.setAttribute('aria-hidden', 'true');
+          el.style.cssText =
+            'position:absolute;pointer-events:none;' +
+            'font-family:' + MONO + ';' +
+            'font-size:9px;color:rgba(255,140,0,0.65);' +
+            'white-space:nowrap;transform:translateX(-50%);' +
+            'letter-spacing:0.04em;';
+          el.textContent = key;
+          document.getElementById('cy').appendChild(el);
+          _keyLabels[id] = el;
+          return el;
+        }
+
+        function _removeKeyLabel(id) {
+          if (_keyLabels[id]) { _keyLabels[id].remove(); delete _keyLabels[id]; }
+        }
+
+        function _positionKeyLabels() {
+          if (!cy) return;
+          cy.nodes().forEach(n => {
+            const lbl = _keyLabels[n.id()];
+            if (!lbl) return;
+            const bb = n.renderedBoundingBox({ includeLabels: false });
+            lbl.style.left = ((bb.x1 + bb.x2) / 2) + 'px';
+            lbl.style.top  = (bb.y2 + 5) + 'px';
+          });
+        }
+
+        // ── Cytoscape init ─────────────────────────────────────────────
+
+        function _initCy() {
+          if (cy) return;
+          cy = cytoscape({
+            container:           document.getElementById('cy'),
+            elements:            [],
+            userZoomingEnabled:  true,
+            userPanningEnabled:  true,
+            boxSelectionEnabled: false,
+            style: [
+              {
+                selector: 'node',
+                style: {
+                  shape:                   'ellipse',
+                  width:                   NODE_SIZE,
+                  height:                  NODE_SIZE,
+                  'background-color':      '#0D0900',
+                  'background-opacity':    1,
+                  'border-width':          2,
+                  'border-color':          '#FF8C00',
+                  'border-opacity':        0.55,
+                  label:                   '1.00',
+                  'text-valign':           'center',
+                  'text-halign':           'center',
+                  color:                   '#FFFFFF',
+                  'text-opacity':          0.85,
+                  'font-size':             16,
+                  'font-weight':           700,
+                  'font-family':           MONO,
+                  'min-zoomed-font-size':  8,
+                },
+              },
+              {
+                selector: 'node:selected',
+                style: {
+                  'border-width':    3.5,
+                  'border-opacity':  1,
+                  'shadow-blur':     20,
+                  'shadow-opacity':  0.5,
+                  'shadow-offset-x': 0,
+                  'shadow-offset-y': 0,
+                  'shadow-color':    '#FF8C00',
+                },
+              },
+              {
+                selector: 'edge',
+                style: {
+                  width:                   1,
+                  'line-color':            'rgba(255,140,0,0.14)',
+                  'target-arrow-color':    'rgba(255,140,0,0.2)',
+                  'target-arrow-shape':    'vee',
+                  'arrow-scale':           0.65,
+                  'curve-style':           'bezier',
+                  label:                   '',
+                  'font-family':           MONO,
+                  'font-size':             10,
+                  color:                   'rgba(255,140,0,0.55)',
+                  'text-background-color':   '#0D0900',
+                  'text-background-opacity': 0.85,
+                  'text-background-padding': '3px',
+                  'min-zoomed-font-size':  8,
+                },
+              },
+              {
+                selector: 'edge:selected',
+                style: {
+                  'line-color':         'rgba(255,140,0,0.4)',
+                  'target-arrow-color': 'rgba(255,140,0,0.5)',
+                },
+              },
+            ],
+          });
+
+          // Show edge weight on hover
+          cy.on('mouseover', 'edge', evt => {
+            const wt = evt.target.data('weight');
+            if (wt != null) evt.target.style('label', (Math.round(wt * 100) / 100).toFixed(2));
+          });
+          cy.on('mouseout', 'edge', evt => evt.target.style('label', ''));
+
+          // Show connected edge weights when node is selected
+          cy.on('select', 'node', evt => {
+            evt.target.connectedEdges().forEach(e => {
+              const wt = e.data('weight');
+              if (wt != null) e.style('label', (Math.round(wt * 100) / 100).toFixed(2));
+            });
+          });
+          cy.on('unselect', 'node', evt => evt.target.connectedEdges().style('label', ''));
+
+          // Reposition key-label divs on every render frame
+          cy.on('render', _positionKeyLabels);
+        }
+
+        // ── Layout ────────────────────────────────────────────────────────
+
+        function _runLayout(fit) {
+          if (!cy) return;
+          // Roots = nodes with no incoming edges (never a target)
+          const roots = cy.nodes().filter(n => n.indegree(false) === 0);
+          cy.layout({
+            name:          'breadthfirst',
+            directed:      true,
+            roots:         roots.length > 0 ? roots : undefined,
+            padding:       52,
+            spacingFactor: 1.4,
+            animate:       false,
+            fit:           fit,
+            avoidOverlap:  true,
+          }).run();
+        }
+
+        // ── Cascade animation ────────────────────────────────────────────
+
+        /**
+         * Stagger recolour outward from droppedKeys by BFS hop distance
+         * (~CASCADE_HOP_MS per hop). Skips stagger for prefers-reduced-motion.
+         *
+         * @param {string[]}               droppedKeys
+         * @param {Object.<string,number>} scoreMap    current score per key
+         */
+        function animateCascade(droppedKeys, scoreMap) {
+          if (!cy || !droppedKeys.length) return;
+
+          // BFS hop distances using cy topology
+          const hopMap = {};
+          droppedKeys.forEach(k => { hopMap[k] = 0; });
+          const queue = [...droppedKeys];
+          while (queue.length > 0) {
+            const cur = queue.shift();
+            cy.getElementById(cur).outgoers('node').forEach(successor => {
+              const id = successor.id();
+              if (!(id in hopMap)) { hopMap[id] = hopMap[cur] + 1; queue.push(id); }
+            });
+          }
+
+          const applyNode = (id) => {
+            const node = cy.getElementById(id);
+            if (!node.length) return;
+            const score = scoreMap[id] ?? 1;
+            const fill  = confColor(score);
+            const alpha = confFillOpacity(score);
+            if (REDUCED_MOTION) {
+              node.style({
+                'background-color':   fill,
+                'background-opacity': alpha,
+                'border-color':       fill,
+                label:                (Math.round(score * 100) / 100).toFixed(2),
+              });
+            } else {
+              node.animate({
+                style:    { 'background-color': fill, 'background-opacity': alpha, 'border-color': fill },
+                duration: ANIM_DURATION,
+                easing:   'ease-out',
+              });
+              node.style('label', (Math.round(score * 100) / 100).toFixed(2));
+              // Brief scale pulse
+              node.animate({
+                style:    { width: NODE_SIZE * 1.18, height: NODE_SIZE * 1.18 },
+                duration: 110,
+                easing:   'ease-out',
+                complete: () => node.animate({
+                  style:    { width: NODE_SIZE, height: NODE_SIZE },
+                  duration: 200,
+                  easing:   'ease-in-out',
+                }),
+              });
+            }
+          };
+
+          if (REDUCED_MOTION) {
+            Object.keys(hopMap).forEach(applyNode);
+          } else {
+            const maxHop = Object.values(hopMap).reduce((m, h) => Math.max(m, h), 0);
+            for (let hop = 0; hop <= maxHop; hop++) {
+              const ids = Object.entries(hopMap).filter(([, h]) => h === hop).map(([id]) => id);
+              setTimeout(() => ids.forEach(applyNode), hop * CASCADE_HOP_MS);
+            }
+          }
+        }
+
+        // ── Apply explicit node style ─────────────────────────────────────
+
+        function _applyNodeStyle(nodeEl, score) {
+          nodeEl.style({
+            'background-color':   confColor(score),
+            'background-opacity': confFillOpacity(score),
+            'border-color':       confColor(score),
+            label:                (Math.round(score * 100) / 100).toFixed(2),
+          });
+        }
+
+        // ── Render ────────────────────────────────────────────────────────
+
+        function _render(state) {
+          if (state.status === 'disabled') { _showOverlay('disabled'); return; }
+          if (state.status === 'init' || state.nodes.length === 0) { _showOverlay('waiting'); return; }
+
+          _showOverlay(null);
+          _initCy();
+
+          const { nodes, edges, prevScores } = state;
+          const scoreMap = Object.fromEntries(nodes.map(n => [n.key, n.score]));
+
+          const droppedKeys = nodes
+            .filter(n => (n.key in prevScores) && n.score < prevScores[n.key])
+            .map(n => n.key);
+
+          // ── Incremental graph update ──────────────────────────────────
+          const existingNodeIds = new Set(cy.nodes().map(n => n.id()));
+          const existingEdgeIds = new Set(cy.edges().map(e => e.id()));
+          const incomingNodeIds = new Set(nodes.map(n => n.key));
+          const incomingEdgeIds = new Set(edges.map(e => `${e.source}__${e.target}`));
+
+          const toAdd = [];
+          for (const n of nodes) {
+            if (!existingNodeIds.has(n.key))
+              toAdd.push({ group: 'nodes', data: { id: n.key, score: n.score } });
+          }
+          for (const e of edges) {
+            const eid = `${e.source}__${e.target}`;
+            if (!existingEdgeIds.has(eid))
+              toAdd.push({ group: 'edges', data: { id: eid, source: e.source, target: e.target, weight: e.weight } });
+          }
+
+          // Remove stale elements (never rebuild entirely — avoids re-layout jumps)
+          cy.nodes().filter(n => !incomingNodeIds.has(n.id())).forEach(n => {
+            _removeKeyLabel(n.id()); n.remove();
+          });
+          cy.edges().filter(e => !incomingEdgeIds.has(e.id())).forEach(e => e.remove());
+
+          if (toAdd.length > 0) cy.add(toAdd);
+
+          for (const n of nodes) _ensureKeyLabel(n.key, n.key);
+
+          const topologyChanged = toAdd.length > 0;
+          if (_firstRender || topologyChanged) {
+            _runLayout(true);
+            _firstRender = false;
+          }
+
+          // ── Score update ────────────────────────────────────────────
+          if (droppedKeys.length > 0) {
+            // Apply steady colours to non-cascade nodes immediately
+            for (const n of nodes) {
+              if (!droppedKeys.includes(n.key)) {
+                const el = cy.getElementById(n.key);
+                if (el.length) _applyNodeStyle(el, n.score);
+              }
+            }
+            animateCascade(droppedKeys, scoreMap);
+          } else {
+            // No drops — recolour all immediately (scores improved or unchanged)
+            for (const n of nodes) {
+              const el = cy.getElementById(n.key);
+              if (el.length) _applyNodeStyle(el, n.score);
+            }
+          }
+
+          requestAnimationFrame(_positionKeyLabels);
+        }
+
+        // ── Init ─────────────────────────────────────────────────────────
+
+        function init() {
+          document.getElementById('btn-reset').addEventListener('click', () => {
+            if (cy) cy.fit(undefined, 52);
+          });
+          RevokGraph.subscribe(_render);
+          _render(RevokGraph.getState());
+        }
+
+        return { init, confColor, confFillOpacity, animateCascade };
+      })();
+
+    </script>
+    <script>
+      /**
+       * Revok Inspector — signal timeline.
+       * Reverse-chronological log of propagation events, derived entirely
+       * client-side by diffing each poll's scores against the previous poll's
+       * scores. No new fetches — subscribes to the existing RevokGraph state.
+       */
+      const TimelineView = (() => {
+        const EPSILON     = 0.02;  // ignore decay jitter below this delta
+        const MAX_EVENTS   = 50;
+
+        const listEl  = document.getElementById('timeline-list');
+        const emptyEl = document.getElementById('timeline-empty');
+
+        /** @type {{ time: number, drops: {key: string, from: number, to: number}[] }[]} */
+        const _events = [];
+
+        function _fmtTime(ms) {
+          const d = new Date(ms);
+          return d.toLocaleTimeString(undefined, { hour12: false }) +
+            '.' + String(d.getMilliseconds()).padStart(3, '0');
+        }
+
+        function _renderEvent(evt) {
+          const li = document.createElement('li');
+          li.className = 'timeline-entry';
+
+          const head = document.createElement('div');
+          head.className = 'timeline-head';
+          const time = document.createElement('span');
+          time.className = 'timeline-time';
+          time.textContent = _fmtTime(evt.time);
+          const summary = document.createElement('span');
+          summary.className = 'timeline-summary';
+          summary.textContent =
+            `${evt.drops.length} belief${evt.drops.length === 1 ? '' : 's'} invalidated`;
+          head.appendChild(time);
+          head.appendChild(summary);
+          li.appendChild(head);
+
+          const deltas = document.createElement('div');
+          deltas.className = 'timeline-deltas';
+          evt.drops.forEach(({ key, from, to }) => {
+            const chip = document.createElement('span');
+            chip.className = 'timeline-delta';
+            const keyEl = document.createElement('span');
+            keyEl.className = 'timeline-delta-key';
+            keyEl.textContent = key;
+            const valEl = document.createElement('span');
+            valEl.className = 'timeline-delta-val';
+            const fromColor = GraphRenderer.confColor(from);
+            const toColor   = GraphRenderer.confColor(to);
+            valEl.innerHTML =
+              `<span style="color:${fromColor}">${from.toFixed(2)}</span>` +
+              ` &rarr; ` +
+              `<span style="color:${toColor}">${to.toFixed(2)}</span>`;
+            chip.appendChild(keyEl);
+            chip.appendChild(valEl);
+            deltas.appendChild(chip);
+          });
+          li.appendChild(deltas);
+          return li;
+        }
+
+        function _render() {
+          emptyEl.classList.toggle('hidden', _events.length > 0);
+          const frag = document.createDocumentFragment();
+          _events.forEach(evt => frag.appendChild(_renderEvent(evt)));
+          listEl.innerHTML = '';
+          listEl.appendChild(frag);
+        }
+
+        function _onState(state) {
+          if (state.status !== 'ok' || state.nodes.length === 0) return;
+
+          const drops = [];
+          for (const n of state.nodes) {
+            const prev = state.prevScores[n.key];
+            if (prev !== undefined && (prev - n.score) > EPSILON) {
+              drops.push({ key: n.key, from: prev, to: n.score });
+            }
+          }
+          if (drops.length === 0) return;
+
+          _events.unshift({ time: state.updatedAt, drops });
+          if (_events.length > MAX_EVENTS) _events.length = MAX_EVENTS;
+          _render();
+        }
+
+        function init() {
+          _render();
+          RevokGraph.subscribe(_onState);
+        }
+
+        return { init };
+      })();
+    </script>
+    <script>
+      /**
+       * Revok Inspector — entity table.
+       * Sortable reference list of all current entities, re-rendered in place
+       * on every poll. No new fetches — subscribes to the existing RevokGraph
+       * state.
+       */
+      const EntityTable = (() => {
+        let _sortKey = 'score';
+        let _sortDir = 'asc';  // lowest confidence first by default
+
+        const bodyEl  = document.getElementById('entity-table-body');
+        const theadEl = document.querySelector('#entity-table thead');
+
+        function _sortedNodes(nodes) {
+          const copy = nodes.slice();
+          copy.sort((a, b) => {
+            const cmp = _sortKey === 'key'
+              ? a.key.localeCompare(b.key)
+              : a.score - b.score;
+            return _sortDir === 'asc' ? cmp : -cmp;
+          });
+          return copy;
+        }
+
+        function _renderRow(n) {
+          const tr = document.createElement('tr');
+          tr.dataset.key = n.key;
+
+          const tdKey = document.createElement('td');
+          tdKey.className = 'entity-key';
+          tdKey.textContent = n.key;
+
+          const color = GraphRenderer.confColor(n.score);
+
+          const tdScore = document.createElement('td');
+          tdScore.className = 'entity-score';
+
+          const scoreVal = document.createElement('span');
+          scoreVal.className = 'entity-score-val';
+          scoreVal.style.color = color;
+          scoreVal.textContent = n.score.toFixed(2);
+
+          const bar = document.createElement('div');
+          bar.className = 'entity-bar';
+          const fill = document.createElement('div');
+          fill.className = 'entity-bar-fill';
+          fill.style.width = `${Math.max(0, Math.min(1, n.score)) * 100}%`;
+          fill.style.background = color;
+          bar.appendChild(fill);
+
+          tdScore.appendChild(scoreVal);
+          tdScore.appendChild(bar);
+          tr.appendChild(tdKey);
+          tr.appendChild(tdScore);
+          return tr;
+        }
+
+        function _updateSortIndicators() {
+          theadEl.querySelectorAll('th[data-sort]').forEach(th => {
+            const active = th.dataset.sort === _sortKey;
+            th.classList.toggle('sort-active', active);
+            if (active) th.dataset.dir = _sortDir;
+            else th.removeAttribute('data-dir');
+          });
+        }
+
+        function _render(state) {
+          const nodes = _sortedNodes(state.nodes);
+          const frag = document.createDocumentFragment();
+          nodes.forEach(n => frag.appendChild(_renderRow(n)));
+          bodyEl.innerHTML = '';
+          bodyEl.appendChild(frag);
+          _updateSortIndicators();
+        }
+
+        function _onHeaderClick(evt) {
+          const th = evt.target.closest('th[data-sort]');
+          if (!th) return;
+          const key = th.dataset.sort;
+          if (_sortKey === key) {
+            _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
+          } else {
+            _sortKey = key;
+            _sortDir = 'asc';
+          }
+          _render(RevokGraph.getState());
+        }
+
+        function init() {
+          theadEl.addEventListener('click', _onHeaderClick);
+          _updateSortIndicators();
+          RevokGraph.subscribe(_render);
+          _render(RevokGraph.getState());
+        }
+
+        return { init };
+      })();
+
+      document.addEventListener('DOMContentLoaded', () => {
+        RevokGraph.start();
+        GraphRenderer.init();
+        TimelineView.init();
+        EntityTable.init();
+      });
+    </script>
   </body>
 </html>

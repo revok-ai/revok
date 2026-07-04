@@ -546,6 +546,13 @@ def build_app(
     )
     app.router.add_get("/v1/inspector/graph", _handle_get_inspector_graph)
     app.router.add_get("/inspector", _handle_get_inspector_viewer)
+    app.router.add_static(
+        "/inspector/vendor",
+        path=Path(__file__).parent / "inspector" / "vendor",
+        show_index=False,
+        follow_symlinks=False,
+        append_version=False,
+    )
     app.router.add_post("/signals", _handle_signal)
     app.router.add_route(aiohttp.hdrs.METH_ANY, "/{path_info:.*}", _handle)
     return app
