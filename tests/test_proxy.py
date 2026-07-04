@@ -1164,3 +1164,42 @@ async def test_inspector_graph_response_schema(tmp_path: Path) -> None:
                 assert "weight" in edge
     finally:
         await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 007: GET /inspector and /inspector/vendor/* — viewer endpoint tests
+# ---------------------------------------------------------------------------
+
+
+async def test_inspector_viewer_returns_html(tmp_path: Path) -> None:
+    """GET /inspector returns 200 with text/html content type."""
+    config = _inspector_config(tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/inspector")
+            assert resp.status == 200
+            assert "text/html" in resp.content_type
+    finally:
+        await store.close()
+
+
+async def test_inspector_vendor_static_asset(tmp_path: Path) -> None:
+    """GET /inspector/vendor/cytoscape.min.js serves the vendored JS file."""
+    config = _inspector_config(tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/inspector/vendor/cytoscape.min.js")
+            assert resp.status == 200
+            assert resp.content_type in ("application/javascript", "text/javascript")
+    finally:
+        await store.close()
