@@ -509,11 +509,20 @@ async def _run_fire_signal() -> None:
                     auth=_REVOK_AUTH,
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as sresp:
+                    if sresp.status >= 400:
+                        detail = await sresp.text()
+                        raise RuntimeError(
+                            f"/signals failed: status={sresp.status} body={detail}"
+                        )
                     _log.info("Causal propagation signal sent: status=%s", sresp.status)
 
-            # Fire both concurrently so a hung/slow memory write can never
-            # delay or block the causal-propagation signal.
-            await asyncio.gather(_write_memory(), _send_signal())
+            _, signal_result = await asyncio.gather(
+                _write_memory(),
+                _send_signal(),
+                return_exceptions=True,
+            )
+            if isinstance(signal_result, Exception):
+                raise signal_result
 
             await asyncio.sleep(0.5)
 
