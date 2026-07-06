@@ -65,25 +65,35 @@ _entity_key: str = ""
 _AMS_HEALTH_TTL = 10.0
 _ams_health_cache: dict[str, Any] = {"ok": True, "expires": 0.0}
 
+# near the top, with other module-level config
+_REVOK_AUTH: aiohttp.BasicAuth | None = None
+
+def _build_revok_auth() -> aiohttp.BasicAuth | None:
+    user = os.getenv("REVOK_DEMO_AUTH_USER", "")
+    password = os.getenv("REVOK_DEMO_AUTH_PASS", "")
+    if user and password:
+        return aiohttp.BasicAuth(user, password)
+    return None
 
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Initialise DB, agents and state on startup."""
-    global _without_revok, _with_revok, _demo_state, _entity_key
+    global _without_revok, _with_revok, _demo_state, _entity_key, _REVOK_AUTH
 
     load_dotenv(APP_DIR / ".env")
 
     ams_url = os.getenv("AMS_URL", "http://localhost:8000")
     revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
+    _REVOK_AUTH = _build_revok_auth()
     # Populate agent module config before building agents
     agent_module._config.update({
         "ams_url": ams_url,
         "revok_url": revok_url,
+        "revok_auth": _REVOK_AUTH,
         "without_revok_user_id": "demo-without-revok",
         "with_revok_user_id": "demo-with-revok",
     })
@@ -153,6 +163,7 @@ async def _fetch_revok_entity(key: str | None = None) -> dict[str, Any] | None:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{revok_url}/v1/entities/{encoded}",
+                auth=_REVOK_AUTH,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status == 404:
@@ -171,6 +182,7 @@ async def _revok_reachable() -> bool:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{revok_url}/v1/entities",
+                auth=_REVOK_AUTH,
                 timeout=aiohttp.ClientTimeout(total=3),
             ) as resp:
                 return resp.status < 500
@@ -425,67 +437,116 @@ async def downgrade_plan() -> JSONResponse:
 async def fire_signal() -> JSONResponse:
     """Simulate a CDC event: billing system signals that the subscription changed.
 
-    Sends a notification through the Revok proxy (WITH-Revok agent only) via
-    POST /v1/long-term-memory so Revok can intercept the write, record the
-    signal, and degrade confidence on the subscription-tier entity.  BFS
-    propagation will also degrade all four dependent entities.
+    Kicks off the actual work in the background and returns 202 immediately,
+    following the same pattern as POST /actions/load-memory.
     """
     if _with_revok is None:
         return JSONResponse({"error": "agents not ready"}, status_code=503)
 
+    asyncio.create_task(_run_fire_signal())
+    return JSONResponse({"status": "started"}, status_code=202)
+
+
+async def _run_fire_signal() -> None:
+    """Background worker: send the CDC signal through the Revok proxy.
+
+    Sends a notification through the Revok proxy (WITH-Revok agent only) via
+    POST /v1/long-term-memory so Revok can intercept the write, record the
+    signal, and degrade confidence on the subscription-tier entity.  BFS
+    propagation will also degrade all four dependent entities.  Updates
+    ``_demo_state`` with the resulting confidence data on success, or logs
+    the failure as an event on error.
+    """
     cdc_content = (
         "Billing system notification: subscription plan changed for customer. "
         "Agent memory may be stale — re-verify all entitlements before answering."
     )
 
     entity: dict[str, Any] | None = None
+    dep_scores: dict[str, float | None] = {}
     try:
         revok_url = os.getenv("REVOK_URL", "http://localhost:7771")
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{revok_url}/v1/long-term-memory/",
-                json={
-                    "memories": [
-                        {
-                            "text": cdc_content,
-                            "session_id": _with_revok.user_id,
-                            "namespace": "entitlements",
-                        }
-                    ]
-                },
-                headers={"X-Revok-Entity": _ROOT_ENTITY_KEY},
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                _log.info("Billing CDC signal sent through Revok proxy: status=%s", resp.status)
+            async def _write_memory() -> None:
+                # Best-effort: this write proxies through Revok to the upstream
+                # AMS store, which can hang/time out independently of causal
+                # propagation. A slow/hung upstream write must NOT block the
+                # /signals call below, or dependent entities never propagate.
+                try:
+                    async with session.post(
+                        f"{revok_url}/v1/long-term-memory/",
+                        json={
+                            "memories": [
+                                {
+                                    "text": cdc_content,
+                                    "session_id": _with_revok.user_id,
+                                    "namespace": "entitlements",
+                                }
+                            ]
+                        },
+                        headers={"X-Revok-Entity": _ROOT_ENTITY_KEY},
+                        auth=_REVOK_AUTH,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as resp:
+                        _log.info(
+                            "Billing CDC signal sent through Revok proxy: status=%s", resp.status
+                        )
+                except Exception as exc:
+                    detail = str(exc) or type(exc).__name__
+                    _log.warning("Billing CDC memory write failed (continuing): %s", detail)
 
-            # Also POST to /signals to trigger causal propagation in SignalProcessor
-            async with session.post(
-                f"{revok_url}/signals",
-                json={
-                    "entity_refs": [_ROOT_ENTITY_KEY],
-                    "severity": "high",
-                    "source": "billing-cdc",
-                },
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as sresp:
-                _log.info("Causal propagation signal sent: status=%s", sresp.status)
+            async def _send_signal() -> None:
+                # This is what actually triggers BFS propagation to dependent
+                # entities via SignalProcessor — must run independently of the
+                # memory write above.
+                async with session.post(
+                    f"{revok_url}/signals",
+                    json={
+                        "entity_refs": [_ROOT_ENTITY_KEY],
+                        "severity": "high",
+                        "source": "billing-cdc",
+                    },
+                    auth=_REVOK_AUTH,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as sresp:
+                    _log.info("Causal propagation signal sent: status=%s", sresp.status)
+
+            # Fire both concurrently so a hung/slow memory write can never
+            # delay or block the causal-propagation signal.
+            await asyncio.gather(_write_memory(), _send_signal())
 
             await asyncio.sleep(0.5)
 
-            encoded = urllib.parse.quote(_ROOT_ENTITY_KEY, safe="")
-            async with session.get(
-                f"{revok_url}/v1/entities/{encoded}",
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as eresp:
-                if eresp.status == 200:
-                    entity = await eresp.json()
+            async def _fetch_root_entity() -> dict[str, Any] | None:
+                encoded = urllib.parse.quote(_ROOT_ENTITY_KEY, safe="")
+                async with session.get(
+                    f"{revok_url}/v1/entities/{encoded}",
+                    auth=_REVOK_AUTH,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as eresp:
+                    if eresp.status == 200:
+                        return await eresp.json()
+                    return None
 
-            # Also fetch propagated scores for all dependent entities
-            dep_scores = await _fetch_dependent_scores(revok_url, session)
+            # Root entity fetch and dependent-entity scores are independent reads
+            # once the signal has been sent — run them concurrently.
+            entity, dep_scores = await asyncio.gather(
+                _fetch_root_entity(),
+                _fetch_dependent_scores(revok_url, session),
+            )
 
     except Exception as exc:
-        _log.error("fire-signal failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=502)
+        # str(exc) is empty for asyncio.TimeoutError, so always include the
+        # exception type name or the message would silently be blank.
+        detail = str(exc) or type(exc).__name__
+        _log.exception("fire-signal failed: %s", detail)
+        state_module.add_event(
+            _demo_state,
+            f"Billing CDC signal failed: {detail}",
+            kind="info",
+        )
+        state_module.save(_demo_state)
+        return
 
     now_iso = datetime.now(timezone.utc).isoformat()
     score: float | None = float(entity["score"]) if entity else None
@@ -506,18 +567,6 @@ async def fire_signal() -> JSONResponse:
     )
     state_module.save(_demo_state)
 
-    return JSONResponse(
-        {
-            "fired": True,
-            "entity_key": _ROOT_ENTITY_KEY,
-            "confidence_score": score,
-            "confidence_status": conf_status,
-            "signal_count": sig_count,
-            "last_signal_at": now_iso,
-            "dependent_scores": dep_scores,
-        }
-    )
-
 
 async def _fetch_dependent_scores(
     revok_url: str,
@@ -525,27 +574,32 @@ async def _fetch_dependent_scores(
 ) -> dict[str, float | None]:
     """Query Revok for the propagated confidence score of each dependent entity.
 
+    Fires all lookups concurrently so the worst case is one 5s timeout instead
+    of N sequential timeouts.
+
     Returns a dict mapping entity key → float score (or None if not yet tracked).
     """
-    scores: dict[str, float | None] = {}
-    for key in _DEPENDENT_ENTITY_KEYS:
+    async def _fetch_one(key: str) -> float | None:
         encoded = urllib.parse.quote(key, safe="")
         try:
             async with session.get(
                 f"{revok_url}/v1/entities/{encoded}",
+                auth=_REVOK_AUTH,
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    scores[key] = float(data.get("score", 1.0))
+                    return float(data.get("score", 1.0))
                 elif resp.status == 404:
-                    scores[key] = None
+                    return None
                 else:
-                    scores[key] = None
+                    return None
         except Exception as exc:
             _log.debug("_fetch_dependent_scores(%s) failed: %s", key, exc)
-            scores[key] = None
-    return scores
+            return None
+
+    results = await asyncio.gather(*(_fetch_one(key) for key in _DEPENDENT_ENTITY_KEYS))
+    return dict(zip(_DEPENDENT_ENTITY_KEYS, results))
 
 
 _DEFAULT_QUESTION = "What does this customer's current plan include?"
@@ -695,6 +749,7 @@ async def health_check() -> JSONResponse:
         async with aiohttp.ClientSession() as s:
             async with s.get(
                 f"{revok_url}/v1/entities",
+                auth=_REVOK_AUTH,
                 timeout=aiohttp.ClientTimeout(total=3),
             ) as r:
                 services["revok"] = "ok" if r.status < 500 else "error"
@@ -988,6 +1043,13 @@ async def _build_state_snapshot() -> dict[str, Any]:
             dep_scores = await _fetch_dependent_scores(revok_url, sess)
     except Exception:
         dep_scores = {k: None for k in _DEPENDENT_ENTITY_KEYS}
+
+    # Mirror the root entity's "verified from DB" fresh-fallback: until a
+    # dependent has a real Revok entity (i.e. a signal has propagated to it),
+    # show it as fresh rather than gray/untracked whenever memory has been
+    # loaded — consistent with how the root entity is displayed above.
+    if _demo_state.get("memory_content"):
+        dep_scores = {k: (v if v is not None else 1.0) for k, v in dep_scores.items()}
     _demo_state["dependent_scores"] = dep_scores
 
     return {
@@ -1056,6 +1118,7 @@ async def reset_demo() -> JSONResponse:
             try:
                 async with session.delete(
                     f"{revok_url}/v1/entities/{encoded}",
+                    auth=_REVOK_AUTH,
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
                     _log.info("Revok entity reset %s: status=%s", key, resp.status)
