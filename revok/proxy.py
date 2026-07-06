@@ -103,14 +103,14 @@ async def basic_auth_middleware(
     header = request.headers.get("Authorization", "")
     if header.startswith("Basic "):
         try:
-            decoded = base64.b64decode(header[6:]).decode("utf-8")
+            decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
             req_user, _, req_pass = decoded.partition(":")
             if hmac.compare_digest(req_user, user) and hmac.compare_digest(
                 req_pass, password
             ):
                 return await handler(request)
         except Exception:
-            pass
+            logger.debug("Invalid Basic Authorization header", exc_info=True)
 
     return aiohttp.web.Response(
         status=401,
