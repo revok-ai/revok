@@ -12,6 +12,8 @@ examples/
 !examples/subscription_demo/agent.py
 !examples/subscription_demo/database.py
 !examples/subscription_demo/demo_state.py
+# Re-include demo config needed by Dockerfile.revok build
+!examples/subscription_demo/revok.yaml
 tests/
 *.md
 .gitignore

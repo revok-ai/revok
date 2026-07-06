@@ -38,6 +38,9 @@ services:
     depends_on:
       redis-ams:
         condition: service_healthy
+    environment:
+      REVOK_DEMO_AUTH_USER: ${REVOK_DEMO_AUTH_USER:-}
+      REVOK_DEMO_AUTH_PASS: ${REVOK_DEMO_AUTH_PASS:-}
 
   api:
     build:
@@ -57,6 +60,8 @@ services:
       OPENAI_LLM_MODEL: ${OPENAI_LLM_MODEL:-gpt-5-mini}
       DEMO_PORT: "8081"
       DEVUI_AUTH_TOKEN: ${DEVUI_AUTH_TOKEN:-revok-demo}
+      REVOK_DEMO_AUTH_USER: ${REVOK_DEMO_AUTH_USER:-}
+      REVOK_DEMO_AUTH_PASS: ${REVOK_DEMO_AUTH_PASS:-}
     depends_on:
       revok:
         condition: service_started

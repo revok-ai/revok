@@ -119,7 +119,12 @@ export function AgentMemory({ state }: AgentMemoryProps) {
           {/* Tree connector + dependent rows */}
           <div className="ml-2 pl-2.5 border-l border-slate-600/40 space-y-1.5 pt-0.5">
             {DEP_ENTITIES.map(([key, label], idx) => {
-              const depScore = state?.dependent_scores?.[key] ?? null;
+              // Gate on `memory` the same way the root score is gated above —
+              // otherwise a leftover Revok entity from a prior session (the
+              // store persists across redeploys, unlike in-memory demo state)
+              // can render dependents as colored while root still shows
+              // "not loaded".
+              const depScore = memory ? (state?.dependent_scores?.[key] ?? null) : null;
               const depColor = scoreColor(depScore);
               const isLast = idx === DEP_ENTITIES.length - 1;
               return (
@@ -139,7 +144,7 @@ export function AgentMemory({ state }: AgentMemoryProps) {
 
           {signalCount === 0 ? (
             <p className="text-[10px] text-slate-500 pt-0.5 italic">
-              Fire a billing signal to populate dependent scores
+              Fire a billing signal to see confidence degrade and propagate
             </p>
           ) : (
             <p className="text-[10px] text-slate-600 pt-0.5">

@@ -245,3 +245,4 @@ demo_state.json
 /.claude/
 /.github/agents/
 /.github/prompts/
+deploy/
