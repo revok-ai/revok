@@ -225,6 +225,8 @@ __marimo__/
 examples/subscription_demo/dashboard/.next/
 examples/subscription_demo/dashboard/node_modules/
 examples/subscription_demo/dashboard/.env.local
+# The Python-packaging "lib/" rule above also matches the dashboard source dir
+!examples/subscription_demo/dashboard/lib/
 
 # Demo runtime artifacts
 examples/subscription_demo/pricing_demo.db
