@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+# Test image for the FalkorDB Lite backend test suite.
+# Not part of the production build; referenced only by compose.falkordblite-tests.yaml.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+COPY revok/ ./revok/
+COPY tests/ ./tests/
+
+RUN pip install --no-cache-dir -e ".[dev,falkordb-lite]"
+
+CMD ["pytest", "tests/contract/test_falkordb_backend_contract.py", "-v"]

@@ -29,6 +29,10 @@ COPY --from=builder /install /usr/local
 
 # Non-root user for security
 RUN useradd --no-create-home --shell /bin/false revok
+
+# Ensure the runtime data directory is writable by the non-root service user.
+RUN mkdir -p /data && chown revok:revok /data
+
 USER revok
 
 # Config is supplied via a bind-mount or volume at runtime

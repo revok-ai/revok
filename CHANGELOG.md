@@ -7,6 +7,68 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.4.0] — 2026-08-25
+
+### Added
+
+#### Pluggable graph backends
+- `FalkorDBLite` graph backend (`revok/falkordb_backend.py`) — an optional
+  embedded alternative to the default NetworkX backend, implemented against the
+  `GraphBackend` protocol. Installed via the `falkordb-lite` extra
+  (`pip install revok[falkordb-lite]`); the default install is unchanged and
+  dependency-free.
+- New `causal_graph` config keys: `graph_backend` (`"networkx"` | `"falkordb-lite"`,
+  default `"networkx"`) and `graph_backend_db_path`. Invalid backend names are
+  rejected at config load with a typed `ConfigError`.
+- Backend-agnostic contract tests (`tests/contract/`) that both backends must
+  satisfy, plus a path-filtered `falkordb-conformance` CI job that runs the
+  FalkorDB Lite suite against a containerised instance.
+
+#### Inspector read API
+- `RevokInspector` (`revok/inspector.py`) and five read-only endpoints for
+  auditing why a belief holds its current confidence:
+  - `GET /v1/inspector/entities/{entity_key}` — inspection report
+  - `GET /v1/inspector/entities/{entity_key}/downstream` — causal dependents
+  - `GET /v1/inspector/entities/{entity_key}/paths` — propagation paths
+  - `GET /v1/inspector/entities/{entity_key}/signals` — signal history
+  - `GET /v1/inspector/graph` — full causal graph topology snapshot
+- `GET /inspector` — self-hosted viewer page with a Cytoscape.js graph renderer,
+  signal timeline, and entity table. Assets are vendored under
+  `revok/inspector/vendor/`; no CDN or network fetch at runtime.
+- SQLite-backed signal history (`revok/signal_history.py`) with automatic
+  row-count trimming per entity.
+- New `inspector` config section: `enabled`, `signal_history_enabled`,
+  `signal_history_max_rows` (default `10000`), `max_paths` (default `100`).
+
+#### Contributor infrastructure
+- CLA workflow and `CLA.md` — contributor licence agreements are collected
+  automatically on pull requests, enabling the dual AGPL v3 / commercial model.
+
+### Changed
+- Callers now route through the `GraphBackend` interface rather than the
+  concrete `CausalGraph`, decoupling propagation from any single graph library.
+- `interfaces.py` gained four protocols: `GraphReader`, `GraphBackend`,
+  `SignalHistoryStore`, and `Inspector`.
+- Subscription demo hardened for public deployment — optional basic-auth
+  middleware, concurrent memory-write and signal dispatch so a slow write can
+  no longer delay causal propagation, baked-in config, and UI gating fixes.
+- Demos standardised on `gpt-5-mini` (`gpt-4` deprecated) and on consistent
+  compose/Dockerfile naming.
+
+### Fixed
+- `ruff` is now pinned to an exact version with an explicit
+  `[tool.ruff.lint] select` list. Previously the range `>=0.4,<1` with no
+  `select` meant the project inherited ruff's implicit defaults; ruff 0.16
+  widened those defaults and turned a clean tree into 41 CI errors on a fresh
+  install while pinned local installs still passed.
+- `examples/subscription_demo/dashboard/lib/` is no longer swallowed by the
+  Python-packaging `lib/` ignore rule, which had left `api.ts` and `utils.ts`
+  untracked and broke the dashboard build from a clean clone.
+- `tests/__init__.py` added so `tests` is a real package — `tests.contract`
+  imports resolved locally by accident but failed in CI's clean environment.
+
+---
+
 ## [0.3.0] — 2026-06-21
 
 ### Added
@@ -194,6 +256,7 @@ scaffold, and the Mem0 memory adapter.
 
 ---
 
+[0.4.0]: https://github.com/revok-ai/revok/releases/tag/v0.4.0
 [0.3.0]: https://github.com/revok-ai/revok/releases/tag/v0.3.0
 [0.2.0]: https://github.com/revok-ai/revok/releases/tag/v0.2.0
 [0.1.1]: https://github.com/revok-ai/revok/releases/tag/v0.1.1

@@ -13,7 +13,7 @@
   <p>
     <a href="#license"><img alt="License: AGPL v3" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" /></a>
     <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" />
-    <img alt="Status" src="https://img.shields.io/badge/status-v0.2.0-orange.svg" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v0.4.0-orange.svg" />
     <img alt="Patent Pending" src="https://img.shields.io/badge/Patent-Pending-orange" />
     <img alt="Async" src="https://img.shields.io/badge/built%20with-asyncio-009688.svg" />
     <a href="#contributing"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" /></a>
@@ -45,6 +45,7 @@
 - [Architecture](#architecture)
 - [Configuration](#configuration)
 - [HTTP API](#http-api)
+- [Inspector](#inspector)
 - [Confidence states](#confidence-states)
 - [Examples](#examples)
 - [Integration Examples](#integration-examples)
@@ -145,6 +146,8 @@ are complementary: keep your retrieval, add a validity layer underneath it.
 - 🧠 **Live confidence on demand** — `GET /v1/entities/{key}` returns a time-recovered score, never a frozen snapshot.
 - 🌐 **World-aware** — ingests external signals (CDC, webhooks, streams) that invalidate beliefs.
 - 🕸️ **Causal graph** — one signal can degrade every downstream memory it affects (NetworkX BFS).
+- 🔎 **Inspector** — read-only API and self-hosted viewer that answer *why* a belief holds its current score.
+- 🔀 **Pluggable graph backends** — NetworkX by default, FalkorDB Lite as an optional extra, behind one protocol.
 - ⏱️ **Time decay + pressure** — confidence recovers over time and drops under signal pressure.
 - ⚡ **Async, low-latency** — built on `asyncio` + `aiohttp`; reads are never blocked.
 - 💾 **Durable state** — SQLite WAL with an in-memory hot layer.
@@ -392,6 +395,29 @@ large catalogs.
 - `scoring.signal_pressure.severity_weights`: maps incoming `/signals` severity labels to pressure.
 - `scoring.signal_pressure.default_severity`: fallback when severity is missing/unknown.
 
+### Graph Backends
+
+Causal propagation runs behind the `GraphBackend` protocol, so the graph engine is
+swappable without touching propagation logic.
+
+| Backend | Value | Install |
+|---------|-------|---------|
+| NetworkX (default) | `"networkx"` | included |
+| FalkorDB Lite | `"falkordb-lite"` | `pip install revok[falkordb-lite]` |
+
+```yaml
+causal_graph:
+  graph_backend: "falkordb-lite"
+  graph_backend_db_path: "/data/falkordb.rdb"
+```
+
+`graph_backend_db_path` is only used by persistent backends; leave it unset for
+NetworkX. An unrecognised backend name is rejected at config load with a
+`ConfigError` rather than failing at runtime.
+
+Both backends are verified against the same contract test suite
+(`tests/contract/`), so propagation semantics do not change when you switch.
+
 ---
 
 ## HTTP API
@@ -412,6 +438,42 @@ To attach a signal to a write, send the entity with the request header:
 ```http
 X-Revok-Entity: apex_hoodie
 ```
+
+---
+
+## Inspector
+
+Confidence scores are only actionable if you can see *why* they moved. The
+Inspector exposes the causal graph and the signal history behind any entity's
+current score — read-only, and never on the write path.
+
+| Method | Path                                             | Description                              |
+|--------|--------------------------------------------------|------------------------------------------|
+| `GET`  | `/v1/inspector/entities/{entity_key}`            | Inspection report for one entity         |
+| `GET`  | `/v1/inspector/entities/{entity_key}/downstream` | Entities this one causally affects       |
+| `GET`  | `/v1/inspector/entities/{entity_key}/paths`      | Propagation paths that reached it        |
+| `GET`  | `/v1/inspector/entities/{entity_key}/signals`    | Signal events recorded against it        |
+| `GET`  | `/v1/inspector/graph`                            | Full causal graph topology snapshot      |
+| `GET`  | `/inspector`                                     | Self-hosted viewer page                  |
+
+`GET /inspector` serves a graph view (Cytoscape.js), a signal timeline, and an
+entity table. Assets are vendored in the package — nothing is fetched from a CDN
+at runtime.
+
+```yaml
+inspector:
+  enabled: true
+  signal_history_enabled: true
+  signal_history_max_rows: 10000   # oldest rows trimmed per entity
+  max_paths: 100                   # cap on paths returned by /paths
+```
+
+With `inspector.enabled: false` the endpoints return **503**. With
+`signal_history_enabled: false` the `/signals` endpoint returns **501** and no
+history is retained.
+
+> The Inspector is a debugging and audit surface. Put it behind your own
+> authentication before exposing it outside a trusted network.
 
 ---
 

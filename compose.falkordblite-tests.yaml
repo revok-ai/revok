@@ -1,0 +1,8 @@
+# Run the FalkorDB Lite backend test suite inside a container.
+# Usage: docker compose -f compose.falkordblite-tests.yaml up --build --exit-code-from falkordb-test
+services:
+  falkordb-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.falkordblite-tests
+    command: pytest tests/contract/test_falkordb_backend_contract.py -v

@@ -7,15 +7,12 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY revok/ ./revok/
 
-RUN pip install --no-cache-dir \
-    "aiohttp>=3.9,<4" \
-    "aiosqlite>=0.20,<1" \
-    "networkx>=3.2,<4" \
-    "pyyaml>=6.0,<7"
+# Include falkordb-lite so the demo can switch backends at runtime via config.
+RUN pip install --no-cache-dir ".[falkordb-lite]"
 
 ENV PYTHONPATH=/app
 
 VOLUME ["/data"]
 EXPOSE 7771
 
-CMD ["python", "-m", "revok", "--config", "/app/revok.yaml"]
+CMD ["python", "-m", "revok", "--config", "/config/revok.yaml"]

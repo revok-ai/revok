@@ -453,6 +453,8 @@ class TestCausalGraphConfig:
         assert cfg.causal_graph.attenuation == 0.8
         assert cfg.causal_graph.processing_timeout_seconds == 2.0
         assert cfg.causal_graph.relationships == []
+        assert cfg.causal_graph.graph_backend == "networkx"
+        assert cfg.causal_graph.graph_backend_db_path is None
 
     def test_causal_graph_relationships_loaded(self, tmp_path: Path) -> None:
         yaml = (
@@ -486,6 +488,35 @@ class TestCausalGraphConfig:
             + "      weight: 1.5\n"
         )
         with pytest.raises(ConfigError, match="weight"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_graph_backend_falkordb_lite_loads(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ncausal_graph:\n  graph_backend: falkordb-lite\n"
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.causal_graph.graph_backend == "falkordb-lite"
+
+    def test_graph_backend_db_path_loads(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ncausal_graph:\n"
+            + "  graph_backend: falkordb-lite\n"
+            + "  graph_backend_db_path: /var/lib/revok/graph.db\n"
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.causal_graph.graph_backend_db_path == "/var/lib/revok/graph.db"
+
+    def test_graph_backend_unknown_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ncausal_graph:\n  graph_backend: redis\n"
+        with pytest.raises(ConfigError, match="graph_backend"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_graph_backend_db_path_non_string_raises(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ncausal_graph:\n"
+            + "  graph_backend_db_path: 42\n"
+        )
+        with pytest.raises(ConfigError, match="graph_backend_db_path"):
             load_config(_write_yaml(tmp_path, yaml))
 
 
@@ -532,4 +563,56 @@ class TestSignalPressureConfig:
             "    default_severity: medium",
         )
         with pytest.raises(ConfigError, match="severity_weights"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+
+# ---------------------------------------------------------------------------
+# T003: InspectorConfig tests
+# ---------------------------------------------------------------------------
+
+
+class TestInspectorConfig:
+    def test_inspector_defaults_when_absent(self, tmp_path: Path) -> None:
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.inspector.enabled is True
+        assert cfg.inspector.signal_history_enabled is True
+        assert cfg.inspector.signal_history_max_rows == 10_000
+        assert cfg.inspector.max_paths == 100
+
+    def test_inspector_explicit_values_loaded(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ninspector:\n"
+            + "  enabled: false\n"
+            + "  signal_history_enabled: false\n"
+            + "  signal_history_max_rows: 500\n"
+            + "  max_paths: 50\n"
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.inspector.enabled is False
+        assert cfg.inspector.signal_history_enabled is False
+        assert cfg.inspector.signal_history_max_rows == 500
+        assert cfg.inspector.max_paths == 50
+
+    def test_inspector_signal_history_max_rows_zero_raises(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ninspector:\n"
+            + "  signal_history_max_rows: 0\n"
+        )
+        with pytest.raises(ConfigError, match="signal_history_max_rows"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_inspector_max_paths_zero_raises(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\ninspector:\n"
+            + "  max_paths: 0\n"
+        )
+        with pytest.raises(ConfigError, match="max_paths"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_inspector_not_a_mapping_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ninspector: not_a_mapping\n"
+        with pytest.raises(ConfigError, match="inspector"):
             load_config(_write_yaml(tmp_path, yaml))

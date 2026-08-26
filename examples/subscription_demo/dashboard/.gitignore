@@ -34,3 +34,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Un-ignore lib/ source directory (root .gitignore has a blanket lib/ rule)
+!/lib/

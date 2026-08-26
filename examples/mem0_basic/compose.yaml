@@ -1,0 +1,62 @@
+name: revok-mem0-demo
+
+services:
+  # ── Qdrant: vector store used by Mem0 ──────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.13.6
+    ports:
+      - "6333:6333"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── Mem0: AI memory layer (port 7770 on host) ─────────────────────────────
+  mem0:
+    build:
+      context: .
+      dockerfile: Dockerfile.mem0
+    ports:
+      - "7770:8000"
+    environment:
+      # Azure OpenAI / Foundry (takes priority when both are set)
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2025-04-01-preview}
+      AZURE_OPENAI_LLM_DEPLOYMENT: ${AZURE_OPENAI_LLM_DEPLOYMENT:-gpt-5-mini}
+      AZURE_OPENAI_LLM_API_VERSION: ${AZURE_OPENAI_LLM_API_VERSION:-2025-04-01-preview}
+      AZURE_OPENAI_EMBEDDER_DEPLOYMENT: ${AZURE_OPENAI_EMBEDDER_DEPLOYMENT:-text-embedding-ada-002}
+      AZURE_OPENAI_EMBEDDER_API_VERSION: ${AZURE_OPENAI_EMBEDDER_API_VERSION:-2023-05-15}
+      # Plain OpenAI fallback
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_LLM_MODEL: ${OPENAI_LLM_MODEL:-gpt-5-mini}
+      OPENAI_EMBEDDER_MODEL: ${OPENAI_EMBEDDER_MODEL:-text-embedding-3-small}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/api/health\")' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── Revok: transparent proxy + entity scoring (port 7771 on host) ─────────
+  revok:
+    image: ${REVOK_IMAGE:-ghcr.io/revok-ai/revok:latest}
+    ports:
+      - "7771:7771"
+    volumes:
+      # Switch backend by changing REVOK_CONFIG_FILE in .env
+      # (default: revok.yaml, optional: revok.falkordb.yaml).
+      # For local source build override, use compose.local.yaml.
+      - ./${REVOK_CONFIG_FILE:-revok.yaml}:/config/revok.yaml:ro
+      - revok_data:/data
+    depends_on:
+      mem0:
+        condition: service_healthy
+
+volumes:
+  revok_data:

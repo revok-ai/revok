@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "revok"
-version = "0.3.0"
+version = "0.4.0"
 description = "Event-driven memory validity layer for AI agents"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
@@ -35,11 +35,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+falkordb-lite = ["falkordblite"]
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<1",
     "pytest-timeout>=2.3,<3",
-    "ruff>=0.4,<1",
+    "ruff==0.16.4",
     "mypy>=1.10,<2",
     "types-PyYAML>=6.0,<7",
 ]
@@ -66,6 +67,11 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+
+[tool.ruff.lint]
+# Pinned explicitly: ruff changed its implicit defaults in 0.16, which silently
+# widened the gate and broke CI. Widening this set is a deliberate decision.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
 python_version = "3.11"

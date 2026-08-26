@@ -225,6 +225,8 @@ __marimo__/
 examples/subscription_demo/dashboard/.next/
 examples/subscription_demo/dashboard/node_modules/
 examples/subscription_demo/dashboard/.env.local
+# The Python-packaging "lib/" rule above also matches the dashboard source dir
+!examples/subscription_demo/dashboard/lib/
 
 # Demo runtime artifacts
 examples/subscription_demo/pricing_demo.db
@@ -232,5 +234,17 @@ examples/subscription_demo/demo_state.json
 
 # Example runtime / generated files
 *.db
+*.db-wal
+*.db-shm
 demo_state.json
 /TASKS.md
+# Claude Code local context (do not commit — internal strategy/IP)
+/CLAUDE.md
+/CLAUDE.local.md
+
+/.specify/
+/specs/
+/.claude/
+/.github/agents/
+/.github/prompts/
+deploy/

@@ -1,0 +1,93 @@
+name: revok-subscription-demo
+
+services:
+  redis-ams:
+    image: redislabs/agent-memory-server:latest
+    command: agent-memory api --host 0.0.0.0 --port 8000 --task-backend=asyncio
+    environment:
+      REDIS_URL: ${AMR_URL}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-}
+      AZURE_API_BASE: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_API_VERSION: ${AZURE_OPENAI_API_VERSION:-}
+      GENERATION_MODEL: ${AMS_GENERATION_MODEL:-azure/gpt-5-mini}
+      EMBEDDING_MODEL: ${AMS_EMBEDDING_MODEL:-azure/text-embedding-ada-002}
+      DISABLE_AUTH: "true"
+      LONG_TERM_MEMORY: "true"
+      ENABLE_DISCRETE_MEMORY_EXTRACTION: "false"
+    ports:
+      - "${AMS_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/v1/health\")' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  revok:
+    image: ${REVOK_IMAGE:-ghcr.io/revok-ai/revok:latest}
+    ports:
+      - "${REVOK_PORT:-7771}:7771"
+    volumes:
+      # Switch backend by changing REVOK_CONFIG_FILE in .env
+      # (default: revok.yaml, optional: revok.falkordb.yaml).
+      - ./${REVOK_CONFIG_FILE:-revok.yaml}:/config/revok.yaml:ro
+      - revok_data:/data
+    depends_on:
+      redis-ams:
+        condition: service_healthy
+    environment:
+      REVOK_DEMO_AUTH_USER: ${REVOK_DEMO_AUTH_USER:-}
+      REVOK_DEMO_AUTH_PASS: ${REVOK_DEMO_AUTH_PASS:-}
+
+  api:
+    build:
+      context: ../..
+      dockerfile: examples/subscription_demo/Dockerfile.api
+    ports:
+      - "${API_PORT:-8081}:8081"
+      - "${DEVUI_PORT:-8082}:8082"
+    environment:
+      AMS_URL: http://redis-ams:8000
+      REVOK_URL: http://revok:7771
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2025-04-01-preview}
+      AZURE_OPENAI_LLM_DEPLOYMENT: ${AZURE_OPENAI_LLM_DEPLOYMENT:-gpt-5-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_LLM_MODEL: ${OPENAI_LLM_MODEL:-gpt-5-mini}
+      DEMO_PORT: "8081"
+      DEVUI_AUTH_TOKEN: ${DEVUI_AUTH_TOKEN:-revok-demo}
+      REVOK_DEMO_AUTH_USER: ${REVOK_DEMO_AUTH_USER:-}
+      REVOK_DEMO_AUTH_PASS: ${REVOK_DEMO_AUTH_PASS:-}
+    depends_on:
+      revok:
+        condition: service_started
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${DASHBOARD_PORT:-3001}:3000"
+    environment:
+      API_URL: http://api:8081
+      NEXT_PUBLIC_API_URL: /api
+      NEXT_PUBLIC_DEVUI_URL: ${NEXT_PUBLIC_DEVUI_URL:-http://localhost:8082}
+      NEXT_PUBLIC_DEVUI_AUTH_HINT: ${DEVUI_AUTH_TOKEN:-revok-demo}
+      NODE_ENV: development
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./dashboard:/app
+      - dashboard_node_modules:/app/node_modules
+      - dashboard_next_cache:/app/.next
+    depends_on:
+      - api
+
+volumes:
+  revok_data:
+  dashboard_node_modules:
+  dashboard_next_cache:

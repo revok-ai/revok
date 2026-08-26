@@ -92,6 +92,13 @@ scoring:
 causal_graph:
   # Enable or disable downstream propagation from root entities.
   enabled: true
+  # Graph backend implementation. Supported values:
+  #   - "networkx" (default, zero-dependency)
+  #   - "falkordb-lite" (persistent backend via FalkorDB Lite)
+  graph_backend: "networkx"
+  # Optional database path used by persistent backends.
+  # Leave unset when using the in-memory NetworkX backend.
+  graph_backend_db_path: null
   # BFS max depth from each root entity.
   max_hops: 2
   # Stop branches once propagated pressure drops below this threshold.
@@ -112,6 +119,19 @@ state_store:
   # Maximum number of entity records kept in the in-memory hot layer.
   # Least-recently-used entries are evicted when the limit is exceeded.
   hot_layer_max_entries: 1000
+
+inspector:
+  # Enable or disable the Inspector read API (/v1/inspector/entities/...).
+  enabled: true
+  # Enable or disable SQLite-backed signal event history.
+  # When false, the /signals endpoint returns HTTP 501.
+  signal_history_enabled: true
+  # Maximum number of signal events retained per entity in the history log.
+  # Oldest rows are automatically deleted after each insert. Must be > 0.
+  signal_history_max_rows: 10000
+  # Maximum number of propagation paths returned by GET .../paths.
+  # Must be > 0.
+  max_paths: 100
 
 logging:
   # Log level: DEBUG | INFO | WARNING | ERROR | CRITICAL

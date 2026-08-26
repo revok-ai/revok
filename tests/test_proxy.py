@@ -18,7 +18,10 @@ from revok.config import (
     ScoringConfig,
     ServerConfig,
     StateStoreConfig,
+    InspectorConfig,
     UpstreamConfig,
+    CausalGraphConfig,
+    CausalRelationshipConfig,
 )
 from revok.entity_matcher import EntityMatcher
 from revok.adapters import Mem0Adapter
@@ -875,4 +878,328 @@ async def test_consumer_task_cancelled_on_cleanup(tmp_path: Path) -> None:
         task = app.get(SIGNAL_PROCESSOR_TASK_KEY)
         assert task is not None
         assert task.done()
+        await store.close()
+
+
+async def test_inspector_get_entity_returns_report_after_write(tmp_path: Path) -> None:
+    """GET /v1/inspector/entities/{entity_key} returns 200 + JSON after a matching write."""
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({"result": "ok"}, status=201)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                # First trigger entity creation via a write
+                await client.post("/v1/memories", json={"content": "Alice arrived"})
+                # Now fetch the inspector report
+                resp = await client.get("/v1/inspector/entities/alice")
+                assert resp.status == 200
+                body = await resp.json()
+                assert body["entity_key"] == "alice"
+                assert "inspected_at" in body
+                assert isinstance(body.get("upstream"), list)
+                assert isinstance(body.get("downstream"), list)
+        finally:
+            await store.close()
+
+
+async def test_inspector_get_entity_returns_404_when_not_found(tmp_path: Path) -> None:
+    """GET /v1/inspector/entities/{entity_key} returns 404 JSON for unknown keys."""
+
+    async def _mock_mem0(request: web.Request) -> web.Response:
+        return web.json_response({}, status=200)
+
+    mock_app = web.Application()
+    mock_app.router.add_route("*", "/{path_info:.*}", _mock_mem0)
+
+    async with TestServer(mock_app) as mock_server:
+        mem0_url = f"http://127.0.0.1:{mock_server.port}"
+        config = _config_with_upstream(mem0_url, tmp_path)
+        matcher = EntityMatcher(config.entity_matcher)
+        scorer = ScoringEngine(config.scoring)
+        store = SqliteStateStore(config.state_store)
+        await store.open()
+
+        try:
+            revok_app = build_app(config, store, matcher, scorer)
+            async with TestClient(TestServer(revok_app)) as client:
+                resp = await client.get("/v1/inspector/entities/nobody")
+                assert resp.status == 404
+                body = await resp.json()
+                assert body.get("error") == "not_found"
+        finally:
+            await store.close()
+
+
+async def test_inspector_disabled_returns_503(tmp_path: Path) -> None:
+    """When inspector is disabled in config, endpoint returns 503."""
+    # Build a Config with inspector disabled
+    config = Config(
+        server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
+        upstream=UpstreamConfig(
+            url="http://127.0.0.1:1",
+            write_methods=["POST"],
+            write_paths=["/v1/memories"],
+        ),
+        entity_matcher=EntityMatcherConfig(
+            patterns=[PatternConfig(name="person", regex=r"\b[A-Z][a-z]+\b")]
+        ),
+        scoring=ScoringConfig(
+            half_life_seconds=86400.0,
+            signal_strength=0.3,
+            score_cap=1.0,
+        ),
+        state_store=StateStoreConfig(
+            sqlite_path=str(tmp_path / "proxy_disabled_inspector.db"),
+            hot_layer_max_entries=10,
+        ),
+        logging=LoggingConfig(level="WARNING", format="%(levelname)s %(message)s"),
+        inspector=InspectorConfig(enabled=False, signal_history_enabled=True, signal_history_max_rows=100, max_paths=10),
+    )
+
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/entities/alice")
+            assert resp.status == 503
+            body = await resp.json()
+            assert body.get("error") == "inspector_disabled"
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 007: GET /v1/inspector/graph — graph topology endpoint tests
+# ---------------------------------------------------------------------------
+
+
+def _inspector_config(
+    tmp_path: Path,
+    relationships: list[CausalRelationshipConfig] | None = None,
+    inspector_enabled: bool = True,
+) -> Config:
+    """Return a Config wired for graph topology endpoint tests."""
+    return Config(
+        server=ServerConfig(host="127.0.0.1", port=8080, startup_timeout_seconds=5.0),
+        upstream=UpstreamConfig(
+            url="http://127.0.0.1:1",
+            write_methods=["POST"],
+            write_paths=["/v1/memories"],
+        ),
+        entity_matcher=EntityMatcherConfig(
+            patterns=[PatternConfig(name="person", regex=r"\b[A-Z][a-z]+\b")]
+        ),
+        scoring=ScoringConfig(
+            half_life_seconds=86400.0,
+            signal_strength=0.3,
+            score_cap=1.0,
+        ),
+        state_store=StateStoreConfig(
+            sqlite_path=str(tmp_path / "graph_test.db"),
+            hot_layer_max_entries=10,
+        ),
+        logging=LoggingConfig(level="WARNING", format="%(levelname)s %(message)s"),
+        causal_graph=CausalGraphConfig(
+            enabled=False,
+            relationships=relationships or [],
+        ),
+        inspector=InspectorConfig(
+            enabled=inspector_enabled,
+            signal_history_enabled=False,
+            signal_history_max_rows=100,
+            max_paths=10,
+        ),
+    )
+
+
+async def test_inspector_graph_empty_graph(tmp_path: Path) -> None:
+    """GET /v1/inspector/graph returns 200 with empty nodes and edges for an empty graph."""
+    config = _inspector_config(tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/graph")
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["nodes"] == []
+            assert body["edges"] == []
+    finally:
+        await store.close()
+
+
+async def test_inspector_graph_returns_nodes_and_edges(tmp_path: Path) -> None:
+    """GET /v1/inspector/graph returns complete nodes and edges from configured relationships."""
+    rels = [CausalRelationshipConfig(source="a", target="b", weight=0.5)]
+    config = _inspector_config(tmp_path, relationships=rels)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/graph")
+            assert resp.status == 200
+            body = await resp.json()
+            node_keys = {n["key"] for n in body["nodes"]}
+            assert "a" in node_keys
+            assert "b" in node_keys
+            assert len(body["edges"]) == 1
+            edge = body["edges"][0]
+            assert edge["source"] == "a"
+            assert edge["target"] == "b"
+            assert abs(edge["weight"] - 0.5) < 1e-6
+    finally:
+        await store.close()
+
+
+async def test_inspector_graph_disabled_returns_503(tmp_path: Path) -> None:
+    """GET /v1/inspector/graph returns 503 with inspector_disabled when inspector is off."""
+    config = _inspector_config(tmp_path, inspector_enabled=False)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/graph")
+            assert resp.status == 503
+            body = await resp.json()
+            assert body.get("error") == "inspector_disabled"
+    finally:
+        await store.close()
+
+
+async def test_inspector_graph_score_fallback_node_score(tmp_path: Path) -> None:
+    """Target-only node (no state record) uses graph-level node_score (0.0 from add_relation)."""
+    rels = [CausalRelationshipConfig(source="src", target="tgt", weight=1.0)]
+    config = _inspector_config(tmp_path, relationships=rels)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/graph")
+            assert resp.status == 200
+            body = await resp.json()
+            # tgt is a target-only node: no state record, graph score=0.0
+            tgt_node = next(n for n in body["nodes"] if n["key"] == "tgt")
+            assert abs(tgt_node["score"]) < 1e-9  # graph node_score = 0.0
+    finally:
+        await store.close()
+
+
+async def test_inspector_graph_snapshot_consistency(tmp_path: Path) -> None:
+    """Every edge source/target key also appears in the nodes array (SC-006)."""
+    rels = [
+        CausalRelationshipConfig(source="x", target="y", weight=0.8),
+        CausalRelationshipConfig(source="y", target="z", weight=0.6),
+    ]
+    config = _inspector_config(tmp_path, relationships=rels)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/graph")
+            assert resp.status == 200
+            body = await resp.json()
+            node_keys = {n["key"] for n in body["nodes"]}
+            for edge in body["edges"]:
+                assert edge["source"] in node_keys, f"source {edge['source']!r} missing from nodes"
+                assert edge["target"] in node_keys, f"target {edge['target']!r} missing from nodes"
+    finally:
+        await store.close()
+
+
+async def test_inspector_graph_response_schema(tmp_path: Path) -> None:
+    """Response always contains 'nodes' and 'edges' list fields."""
+    rels = [CausalRelationshipConfig(source="p", target="q", weight=1.0)]
+    config = _inspector_config(tmp_path, relationships=rels)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/v1/inspector/graph")
+            assert resp.status == 200
+            assert resp.content_type == "application/json"
+            body = await resp.json()
+            assert isinstance(body["nodes"], list)
+            assert isinstance(body["edges"], list)
+            for node in body["nodes"]:
+                assert "key" in node
+                assert "score" in node
+            for edge in body["edges"]:
+                assert "source" in edge
+                assert "target" in edge
+                assert "weight" in edge
+    finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 007: GET /inspector and /inspector/vendor/* — viewer endpoint tests
+# ---------------------------------------------------------------------------
+
+
+async def test_inspector_viewer_returns_html(tmp_path: Path) -> None:
+    """GET /inspector returns 200 with text/html content type."""
+    config = _inspector_config(tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/inspector")
+            assert resp.status == 200
+            assert "text/html" in resp.content_type
+    finally:
+        await store.close()
+
+
+async def test_inspector_vendor_static_asset(tmp_path: Path) -> None:
+    """GET /inspector/vendor/cytoscape.min.js serves the vendored JS file."""
+    config = _inspector_config(tmp_path)
+    matcher = EntityMatcher(config.entity_matcher)
+    scorer = ScoringEngine(config.scoring)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        revok_app = build_app(config, store, matcher, scorer)
+        async with TestClient(TestServer(revok_app)) as client:
+            resp = await client.get("/inspector/vendor/cytoscape.min.js")
+            assert resp.status == 200
+            assert resp.content_type in ("application/javascript", "text/javascript")
+    finally:
         await store.close()

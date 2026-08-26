@@ -18,7 +18,6 @@ is called, so the tool closures can read AMS / Revok URLs at runtime.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -37,6 +36,15 @@ from pydantic import Field
 
 _log = logging.getLogger(__name__)
 
+
+def _build_revok_auth() -> aiohttp.BasicAuth | None:
+    user = os.getenv("REVOK_DEMO_AUTH_USER", "")
+    password = os.getenv("REVOK_DEMO_AUTH_PASS", "")
+    if user and password:
+        return aiohttp.BasicAuth(user, password)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Runtime configuration  -  set from server.py lifespan before build_agents()
 # ---------------------------------------------------------------------------
@@ -44,6 +52,7 @@ _log = logging.getLogger(__name__)
 _config: dict[str, Any] = {
     "ams_url": "http://localhost:8000",
     "revok_url": "http://localhost:7771",
+    "revok_auth": _build_revok_auth(),
     "without_revok_user_id": "demo-without-revok",
     "with_revok_user_id": "demo-with-revok",
     "db_path": "",          # set by server.py after db init
@@ -75,14 +84,16 @@ def _build_client() -> OpenAIChatCompletionClient:
     az_key = os.getenv("AZURE_OPENAI_API_KEY", "")
     az_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     if az_key and az_endpoint:
+        endpoint = az_endpoint.rstrip("/")
+        if endpoint.lower().endswith("/openai/v1"):
+            endpoint = endpoint[: -len("/openai/v1")]
         return OpenAIChatCompletionClient(
-            model=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-4o-mini"),
-            azure_endpoint=az_endpoint.rstrip("/"),
+            model=os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-5-mini"),
             api_key=az_key,
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
+            base_url=f"{endpoint}/openai/v1",
         )
     return OpenAIChatCompletionClient(
-        model=os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini"),
+        model=os.getenv("OPENAI_LLM_MODEL", "gpt-5-mini"),
         api_key=os.getenv("OPENAI_API_KEY", ""),
     )
 
@@ -146,6 +157,7 @@ async def get_revok_confidence(
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{revok_url}/v1/entities/{encoded}",
+                auth=_config["revok_auth"],
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status == 404:
@@ -236,12 +248,54 @@ async def store_corrected_memory(
         "Verified from database."
     )
     ams_url = _config.get("ams_url", "")
+    new_memory_id = str(_uuid.uuid4())
     try:
         async with aiohttp.ClientSession() as session:
-            # Step 1: Delete all existing AMS memories for this user so the corrected
-            # entry is the only one.  POST /v1/long-term-memory always INSERTs a new
-            # record (there is no update-in-place); without this step the stale record
-            # and the corrected record coexist and search results are non-deterministic.
+            # Step 1: Delete the stale Revok entity so the write-back creates a fresh
+            # record at score_cap - signal_strength instead of degrading further.
+            try:
+                async with session.delete(
+                    f"{revok_url}/v1/entities/subscription-tier",
+                    auth=_config.get("revok_auth"),
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as del_resp:
+                    _log.info(
+                        "store_corrected_memory: entity delete status=%s", del_resp.status
+                    )
+            except Exception as exc:
+                _log.warning("store_corrected_memory: entity delete failed (continuing): %s", exc)
+
+            # Step 2: Write the corrected memory through the Revok proxy FIRST, before
+            # touching any existing memory, so enrich() creates a fresh entity record
+            # (score resets, signal_count=1). This proxy write is known to reliably
+            # take up to ~30s (see _write_memory() in server.py's fire-signal path),
+            # so it needs a matching timeout - a shorter timeout here would guarantee
+            # failure on every call.
+            payload = {
+                "memories": [
+                    {
+                        "id": new_memory_id,
+                        "text": content,
+                        "session_id": user_id,
+                        "namespace": "entitlements",
+                    }
+                ],
+                "deduplicate": False,
+            }
+            async with session.post(
+                f"{revok_url}/v1/long-term-memory/",
+                json=payload,
+                headers={"X-Revok-Entity": "subscription-tier"},
+                auth=_config.get("revok_auth"),
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                resp.raise_for_status()
+
+            # Step 3: Only now that the corrected entry is safely written, clean up
+            # the old stale memories so search results are deterministic. This must
+            # happen AFTER the write succeeds - if it happened first and the write
+            # above timed out, the user would be left with zero memories (surfacing
+            # as "no subscription data has been loaded yet" on the next question).
             # These terms are guaranteed to match because "subscription" and "tier"
             # are hardcoded literals in the memory write template (see the content=
             # block just above, and _run_load_memory() in server.py which uses the
@@ -264,7 +318,7 @@ async def store_corrected_memory(
                             data = await resp.json()
                             mems = data if isinstance(data, list) else data.get("memories", data.get("results", []))
                             for m in mems:
-                                if m.get("id"):
+                                if m.get("id") and m["id"] != new_memory_id:
                                     seen_ids.add(m["id"])
                 except Exception:
                     pass
@@ -278,50 +332,17 @@ async def store_corrected_memory(
                         pass  # best-effort
                 except Exception:
                     pass
-            if seen_ids:
-                await asyncio.sleep(0.5)  # let AMS propagate deletes
-
-            # Step 2: Delete the stale Revok entity so the write-back creates a fresh
-            # record at score_cap - signal_strength instead of degrading further.
-            try:
-                async with session.delete(
-                    f"{revok_url}/v1/entities/subscription-tier",
-                    timeout=aiohttp.ClientTimeout(total=5),
-                ) as del_resp:
-                    _log.info(
-                        "store_corrected_memory: entity delete status=%s", del_resp.status
-                    )
-            except Exception as exc:
-                _log.warning("store_corrected_memory: entity delete failed (continuing): %s", exc)
-
-            # Step 3: Write the single corrected memory through the Revok proxy so
-            # enrich() creates a fresh entity record (score resets, signal_count=1).
-            payload = {
-                "memories": [
-                    {
-                        "id": str(_uuid.uuid4()),
-                        "text": content,
-                        "session_id": user_id,
-                        "namespace": "entitlements",
-                    }
-                ],
-                "deduplicate": False,
-            }
-            async with session.post(
-                f"{revok_url}/v1/long-term-memory/",
-                json=payload,
-                headers={"X-Revok-Entity": "subscription-tier"},
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                resp.raise_for_status()
         _log.info(
-            "store_corrected_memory: replaced %d stale memories, wrote corrected entry for %s",
+            "store_corrected_memory: wrote corrected entry and replaced %d stale memories for %s",
             len(seen_ids), user_id,
         )
         return json.dumps({"stored": True, "content": content})
     except Exception as exc:
-        _log.error("store_corrected_memory failed: %s", exc)
-        return json.dumps({"stored": False, "error": str(exc)})
+        # str(exc) is empty for asyncio.TimeoutError, so always include the
+        # exception type name or the message would silently be blank.
+        detail = str(exc) or type(exc).__name__
+        _log.exception("store_corrected_memory failed: %s", detail)
+        return json.dumps({"stored": False, "error": detail})
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +502,7 @@ class AgentFrameworkCustomerSuccessAgent:
                     async with aiohttp.ClientSession() as sess:
                         async with sess.get(
                             f"{revok_url}/v1/entities/{encoded}",
+                            auth=_config.get("revok_auth"),
                             timeout=aiohttp.ClientTimeout(total=5),
                         ) as resp:
                             if resp.status == 200:

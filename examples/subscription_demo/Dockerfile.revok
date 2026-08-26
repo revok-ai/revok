@@ -4,9 +4,10 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY revok/ ./revok/
+COPY examples/subscription_demo/revok.yaml /config/revok.yaml
 
-# Install all deps declared in pyproject.toml (includes rapidfuzz, aiohttp, etc.)
-RUN pip install --no-cache-dir .
+# Include falkordb-lite so the demo can switch backends at runtime via config.
+RUN pip install --no-cache-dir ".[falkordb-lite]"
 
 ENV PYTHONPATH=/app
 
