@@ -92,6 +92,13 @@ scoring:
 causal_graph:
   # Enable or disable downstream propagation from root entities.
   enabled: true
+  # Graph backend implementation. Supported values:
+  #   - "networkx" (default, zero-dependency)
+  #   - "falkordb-lite" (persistent backend via FalkorDB Lite)
+  graph_backend: "networkx"
+  # Optional database path used by persistent backends.
+  # Leave unset when using the in-memory NetworkX backend.
+  graph_backend_db_path: null
   # BFS max depth from each root entity.
   max_hops: 2
   # Stop branches once propagated pressure drops below this threshold.
