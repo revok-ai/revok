@@ -240,3 +240,74 @@ class TestGraphTopologyResponse:
         assert len(resp.edges) == 1
         assert resp.nodes[0].key == "a"
         assert resp.edges[0].source == "a"
+
+
+class TestIngestionModels:
+    def test_applied_and_duplicate_outcomes_are_acknowledged(self):
+        from revok.models import ProcessingOutcome
+
+        assert ProcessingOutcome("s1", "applied").should_ack is True
+        assert ProcessingOutcome("s1", "duplicate").should_ack is True
+
+    def test_failed_outcome_is_not_acknowledged(self):
+        from revok.models import ProcessingOutcome
+
+        outcome = ProcessingOutcome("s1", "failed", failure_reason="boom")
+        assert outcome.should_ack is False
+        assert outcome.failure_reason == "boom"
+
+    def test_dedupe_record_construction(self):
+        from revok.models import DedupeRecord
+
+        record = DedupeRecord(
+            signal_id="s1",
+            processed_at=1.0,
+            source_name="http",
+            entity_keys=("a", "b"),
+        )
+        assert record.signal_id == "s1"
+        assert record.entity_keys == ("a", "b")
+
+    def test_dead_letter_record_retains_recovery_information(self):
+        from revok.models import DeadLetterRecord
+
+        record = DeadLetterRecord(
+            signal_id="s1",
+            source_name="redis_streams",
+            payload='{"entity_refs": ["a"]}',
+            delivery_attempts=3,
+            failure_reason="store unavailable",
+            dead_lettered_at=2.0,
+        )
+        assert record.delivery_attempts == 3
+        assert "entity_refs" in record.payload
+        assert record.failure_reason == "store unavailable"
+
+
+class TestSignalSourceProtocol:
+    def test_conforming_source_satisfies_protocol(self):
+        from revok.interfaces import SignalSource
+
+        class Conforming:
+            async def receive(self):
+                yield  # pragma: no cover
+
+            async def ack(self, signal):
+                return None
+
+            async def close(self):
+                return None
+
+        assert isinstance(Conforming(), SignalSource)
+
+    def test_source_without_ack_does_not_satisfy_protocol(self):
+        from revok.interfaces import SignalSource
+
+        class MissingAck:
+            async def receive(self):
+                yield  # pragma: no cover
+
+            async def close(self):
+                return None
+
+        assert not isinstance(MissingAck(), SignalSource)

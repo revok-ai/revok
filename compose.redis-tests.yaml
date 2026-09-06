@@ -1,0 +1,23 @@
+# Run the Redis Streams signal source suite against a real Redis instance.
+# The default suite uses an injected fake client; this harness exercises the
+# same tests against real consumer-group semantics.
+# Usage: docker compose -f compose.redis-tests.yaml up --build --exit-code-from redis-test
+services:
+  redis:
+    image: redis:8-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  redis-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.redis-tests
+    environment:
+      REVOK_TEST_REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: pytest tests/test_redis_source.py tests/test_integration_signal_source.py -v

@@ -1,0 +1,31 @@
+# Build context for Dockerfile.redis-tests.
+#
+# Exists so the Redis integration test image can COPY tests/, which the root
+# .dockerignore excludes to keep production images lean. Docker prefers
+# <dockerfile-name>.dockerignore over .dockerignore, so this file shadows the
+# root one for this build only.
+#
+# Identical to the root .dockerignore except that `tests/` is not excluded.
+# Keep the two in sync when adding new exclusions.
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+examples/
+# Re-include demo source files needed by Dockerfile.api build
+!examples/subscription_demo/server.py
+!examples/subscription_demo/agent.py
+!examples/subscription_demo/database.py
+!examples/subscription_demo/demo_state.py
+# Re-include demo config needed by Dockerfile.revok build
+!examples/subscription_demo/revok.yaml
+*.md
+.gitignore
+TASKS.md
+.env*
+*.log*
+coverage/

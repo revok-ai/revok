@@ -616,3 +616,52 @@ class TestInspectorConfig:
         yaml = VALID_YAML + "\ninspector: not_a_mapping\n"
         with pytest.raises(ConfigError, match="inspector"):
             load_config(_write_yaml(tmp_path, yaml))
+
+
+class TestSignalSourcesConfig:
+    def test_defaults_enable_http_only(self, tmp_path: Path) -> None:
+        cfg = load_config(_write_yaml(tmp_path, VALID_YAML))
+        assert cfg.sources.http.enabled is True
+        assert cfg.sources.redis_streams.enabled is False
+        assert cfg.ingestion.dedupe_max_rows == 100_000
+        assert cfg.ingestion.max_concurrent_signals == 16
+
+    def test_redis_streams_values_are_loaded(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\nsources:\n"
+            + "  redis_streams:\n"
+            + "    enabled: true\n"
+            + '    url: "redis://localhost:6379"\n'
+            + "    max_delivery_attempts: 5\n"
+        )
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.sources.redis_streams.enabled is True
+        assert cfg.sources.redis_streams.url == "redis://localhost:6379"
+        assert cfg.sources.redis_streams.max_delivery_attempts == 5
+        assert cfg.sources.redis_streams.stream == "revok:signals"
+
+    def test_enabled_redis_streams_requires_url(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\nsources:\n  redis_streams:\n    enabled: true\n"
+        with pytest.raises(ConfigError, match="url is required"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_non_positive_attempt_bound_raises(self, tmp_path: Path) -> None:
+        yaml = (
+            VALID_YAML
+            + "\nsources:\n"
+            + "  redis_streams:\n"
+            + "    max_delivery_attempts: 0\n"
+        )
+        with pytest.raises(ConfigError, match="max_delivery_attempts"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_sources_not_a_mapping_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\nsources: not_a_mapping\n"
+        with pytest.raises(ConfigError, match="sources"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_non_positive_dedupe_rows_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ningestion:\n  dedupe_max_rows: 0\n"
+        with pytest.raises(ConfigError, match="dedupe_max_rows"):
+            load_config(_write_yaml(tmp_path, yaml))

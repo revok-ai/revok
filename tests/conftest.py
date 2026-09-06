@@ -89,6 +89,59 @@ def tmp_db_path(tmp_path: Path) -> str:
     return str(tmp_path / "revok_test.db")
 
 
+# ---------------------------------------------------------------------------
+# Feature 009 — signal source fixtures
+# ---------------------------------------------------------------------------
+
+
+class ListSignalSource:
+    """Deterministic ``SignalSource`` yielding a fixed list, recording acks."""
+
+    def __init__(self, signals: list[object], *, name: str = "list") -> None:
+        self.name = name
+        self._signals = list(signals)
+        self.acked: list[object] = []
+        self.closed = False
+
+    async def receive(self):  # type: ignore[no-untyped-def]
+        for signal in self._signals:
+            yield signal
+
+    async def ack(self, signal: object) -> None:
+        self.acked.append(signal)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FailingSignalSource:
+    """``SignalSource`` whose iteration raises, for failure-isolation tests."""
+
+    def __init__(self, *, name: str = "failing") -> None:
+        self.name = name
+        self.closed = False
+
+    async def receive(self):  # type: ignore[no-untyped-def]
+        raise RuntimeError("source boom")
+        yield  # pragma: no cover - makes this an async generator
+
+    async def ack(self, signal: object) -> None:
+        return None
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture
+def list_source_factory():  # type: ignore[no-untyped-def]
+    """Return a factory building a :class:`ListSignalSource`."""
+
+    def _factory(signals: list[object], name: str = "list") -> ListSignalSource:
+        return ListSignalSource(signals, name=name)
+
+    return _factory
+
+
 # On Windows, Python's shutdown sequence blocks joining executor threads
 # (via concurrent.futures.thread._python_exit atexit handler) which keeps
 # the process alive in Git Bash / mintty.  Calling os._exit() in

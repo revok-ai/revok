@@ -255,6 +255,66 @@ class InspectorConfig:
 
 
 @dataclass(frozen=True)
+class HttpSourceConfig:
+    """HTTP ingestion source settings.
+
+    Attributes:
+        enabled: Enables the default HTTP signal source. Requires no extra.
+    """
+
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class RedisStreamsSourceConfig:
+    """Durable Redis Streams ingestion source settings.
+
+    Attributes:
+        enabled: Enables the durable source. Requires the ``redis`` extra.
+        url: Redis connection URL. Required when enabled.
+        stream: Stream key signals are published to.
+        consumer_group: Consumer group name providing at-least-once delivery.
+        consumer_name: Consumer name within the group.
+        block_ms: Milliseconds to block waiting for new entries.
+        batch_size: Maximum entries read per call.
+        max_delivery_attempts: Attempts before a signal is dead-lettered.
+    """
+
+    enabled: bool = False
+    url: str = ""
+    stream: str = "revok:signals"
+    consumer_group: str = "revok"
+    consumer_name: str = "revok-1"
+    block_ms: int = 5000
+    batch_size: int = 10
+    max_delivery_attempts: int = 3
+
+
+@dataclass(frozen=True)
+class SignalSourcesConfig:
+    """Enabled signal ingestion sources."""
+
+    http: HttpSourceConfig = field(default_factory=HttpSourceConfig)
+    redis_streams: RedisStreamsSourceConfig = field(
+        default_factory=RedisStreamsSourceConfig
+    )
+
+
+@dataclass(frozen=True)
+class IngestionConfig:
+    """Cross-source ingestion controls.
+
+    Attributes:
+        dedupe_max_rows: Maximum deduplication rows retained instance-wide.
+            Oldest rows are evicted first. Independent of trace storage.
+        max_concurrent_signals: Maximum signals processed concurrently per source.
+    """
+
+    dedupe_max_rows: int = 100_000
+    max_concurrent_signals: int = 16
+
+
+@dataclass(frozen=True)
 class Config:
     """Root configuration object. Loaded once at startup; immutable thereafter.
 
@@ -276,6 +336,8 @@ class Config:
     adapter_type: str = "mem0"
     causal_graph: CausalGraphConfig = field(default_factory=CausalGraphConfig)
     inspector: InspectorConfig = field(default_factory=InspectorConfig)
+    sources: SignalSourcesConfig = field(default_factory=SignalSourcesConfig)
+    ingestion: IngestionConfig = field(default_factory=IngestionConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +710,9 @@ def load_config(path: str) -> Config:
         max_paths=int(insp_max_paths),
     )
 
+    sources_cfg = _parse_sources(data)
+    ingestion_cfg = _parse_ingestion(data)
+
     return Config(
         server=server_cfg,
         upstream=upstream_cfg,
@@ -658,4 +723,65 @@ def load_config(path: str) -> Config:
         adapter_type=adapter_type,
         causal_graph=causal_graph_cfg,
         inspector=inspector_cfg,
+        sources=sources_cfg,
+        ingestion=ingestion_cfg,
+    )
+
+
+def _parse_sources(data: dict[str, Any]) -> SignalSourcesConfig:
+    """Parse and validate the optional ``sources`` section."""
+    raw = data.get("sources") or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("sources must be a mapping when provided.")
+
+    http_raw = raw.get("http") or {}
+    if not isinstance(http_raw, dict):
+        raise ConfigError("sources.http must be a mapping when provided.")
+    http_cfg = HttpSourceConfig(enabled=bool(http_raw.get("enabled", True)))
+
+    redis_raw = raw.get("redis_streams") or {}
+    if not isinstance(redis_raw, dict):
+        raise ConfigError("sources.redis_streams must be a mapping when provided.")
+
+    redis_enabled = bool(redis_raw.get("enabled", False))
+    url = str(redis_raw.get("url", "") or "")
+    if redis_enabled and not url:
+        raise ConfigError("sources.redis_streams.url is required when enabled.")
+
+    for key in ("block_ms", "batch_size", "max_delivery_attempts"):
+        value = redis_raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"sources.redis_streams.{key} must be a positive integer.")
+
+    redis_cfg = RedisStreamsSourceConfig(
+        enabled=redis_enabled,
+        url=url,
+        stream=str(redis_raw.get("stream", "revok:signals")),
+        consumer_group=str(redis_raw.get("consumer_group", "revok")),
+        consumer_name=str(redis_raw.get("consumer_name", "revok-1")),
+        block_ms=int(redis_raw.get("block_ms", 5000)),
+        batch_size=int(redis_raw.get("batch_size", 10)),
+        max_delivery_attempts=int(redis_raw.get("max_delivery_attempts", 3)),
+    )
+    return SignalSourcesConfig(http=http_cfg, redis_streams=redis_cfg)
+
+
+def _parse_ingestion(data: dict[str, Any]) -> IngestionConfig:
+    """Parse and validate the optional ``ingestion`` section."""
+    raw = data.get("ingestion") or {}
+    if not isinstance(raw, dict):
+        raise ConfigError("ingestion must be a mapping when provided.")
+
+    for key in ("dedupe_max_rows", "max_concurrent_signals"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigError(f"ingestion.{key} must be a positive integer.")
+
+    return IngestionConfig(
+        dedupe_max_rows=int(raw.get("dedupe_max_rows", 100_000)),
+        max_concurrent_signals=int(raw.get("max_concurrent_signals", 16)),
     )
