@@ -31,6 +31,7 @@ import hmac
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 import time
 from typing import Any, cast
@@ -44,14 +45,16 @@ from revok.causal_graph import CausalGraph
 from revok.config import CausalGraphConfig, Config
 from revok.entity_matcher import EntityMatcher
 from revok.inspector import EntityNotFoundError, RevokInspector
-from revok.interfaces import GraphBackend, GraphReader, StateStore
+from revok.interfaces import GraphBackend, GraphReader, Resolver, StateStore
 from revok.metadata_writer import enrich
 from revok.models import (
     GraphEdgeView,
     GraphNodeView,
     GraphTopologyResponse,
+    ResolutionTrace,
     Signal,
 )
+from revok.resolver_runtime import invoke_resolver
 from revok.scoring import ScoringEngine
 from revok.signal_history import SqliteSignalHistoryStore
 from revok.signal_processor import SignalProcessor
@@ -124,6 +127,7 @@ def build_app(
     matcher: EntityMatcher,
     scorer: ScoringEngine,
     bus: AsyncioQueueBus | None = None,
+    resolver: Resolver | None = None,
 ) -> aiohttp.web.Application:
     """Build and return the Revok aiohttp proxy application.
 
@@ -150,6 +154,7 @@ def build_app(
         bus: Optional signal bus for the ``POST /signals`` endpoint.
             A new :class:`~revok.signal_queue.AsyncioQueueBus` is created
             internally if *bus* is ``None``.
+        resolver: Optional injected free-text resolver.
 
     Returns:
         :class:`aiohttp.web.Application` ready for
@@ -176,6 +181,7 @@ def build_app(
         graph,
         config.causal_graph,
         history=history,
+        trace_store=history,
     )
     inspector = RevokInspector(store, cast(GraphReader, graph), history)
 
@@ -437,12 +443,114 @@ def build_app(
                 body=json.dumps({"error": "invalid_body", "detail": str(exc)}).encode(),
             )
 
-        entity_refs: list[str] = parsed.get("entity_refs") or []
+        if not isinstance(parsed, dict):
+            return aiohttp.web.Response(
+                status=400,
+                content_type="application/json",
+                body=json.dumps({"error": "invalid_body"}).encode(),
+            )
+        entity_refs_value = parsed.get("entity_refs")
+        if entity_refs_value is not None and not isinstance(entity_refs_value, list):
+            return aiohttp.web.Response(
+                status=400,
+                content_type="application/json",
+                body=json.dumps({"error": "invalid_entity_refs"}).encode(),
+            )
+        entity_refs: list[str] = entity_refs_value or []
+        signal_text = str(parsed.get("signal_text") or "").strip()
         source: str = str(parsed.get("source") or "webhook")
+        signal_id = str(uuid.uuid4())
+        resolved_targets = []
+        dropped_targets = []
+        created_at = time.time()
+
+        async def _write_trace(trace: ResolutionTrace) -> None:
+            if history is None:
+                return
+            await history.start_trace(trace)
+
+        if signal_text and not entity_refs:
+            pending_trace = ResolutionTrace(
+                signal_id=signal_id,
+                created_at=created_at,
+                completed_at=None,
+                source_id=source,
+                signal_text=signal_text,
+                status="pending",
+                error_code=None,
+                error_detail=None,
+                targets=[],
+                dropped_targets=[],
+                invalidations=[],
+                propagation=[],
+            )
+            await _write_trace(pending_trace)
+            if resolver is None:
+                failed = dataclasses.replace(
+                    pending_trace,
+                    completed_at=time.time(),
+                    status="failed",
+                    error_code="resolver_not_configured",
+                )
+                if history is not None:
+                    await history.finish_trace(failed)
+                return aiohttp.web.Response(
+                    status=400,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {"error": "resolver_not_configured", "signal_id": signal_id}
+                    ).encode(),
+                )
+            try:
+                validation = await invoke_resolver(
+                    resolver,
+                    signal_text,
+                    cast(GraphReader, graph),
+                )
+                resolved_targets = validation.targets
+                dropped_targets = validation.dropped_targets
+            except Exception as exc:
+                failed = dataclasses.replace(
+                    pending_trace,
+                    completed_at=time.time(),
+                    status="failed",
+                    error_code="resolver_failed",
+                    error_detail=str(exc),
+                )
+                if history is not None:
+                    await history.finish_trace(failed)
+                return aiohttp.web.Response(
+                    status=502,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {"error": "resolver_failed", "signal_id": signal_id}
+                    ).encode(),
+                )
+            if not resolved_targets:
+                completed = dataclasses.replace(
+                    pending_trace,
+                    completed_at=time.time(),
+                    status="completed",
+                    dropped_targets=dropped_targets,
+                )
+                if history is not None:
+                    await history.finish_trace(completed)
+                return aiohttp.web.Response(
+                    status=202,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "accepted": True,
+                            "signal_id": signal_id,
+                            "resolved_targets": 0,
+                        }
+                    ).encode(),
+                )
+
         raw_content = (
             " ".join(entity_refs)
             if entity_refs
-            else body_bytes.decode("utf-8", errors="replace")
+            else signal_text or body_bytes.decode("utf-8", errors="replace")
         )
 
         signal = Signal(
@@ -453,13 +561,81 @@ def build_app(
             http_path="/signals",
             original_body=body_bytes,
             headers=dict(request.headers),
+            signal_id=signal_id,
+            signal_text=signal_text or None,
+            resolved_targets=tuple(resolved_targets),
+            dropped_targets=tuple(dropped_targets),
         )
         await _bus.publish(signal)
         return aiohttp.web.Response(
             status=202,
             content_type="application/json",
-            body=json.dumps({"accepted": True}).encode(),
+            body=json.dumps(
+                {
+                    "accepted": True,
+                    "signal_id": signal_id,
+                    "resolved_targets": len(resolved_targets) if signal_text else len(entity_refs),
+                }
+            ).encode(),
         )
+
+    async def _handle_relationship(request: aiohttp.web.Request) -> aiohttp.web.Response:
+        """POST /v1/graph/relationships — idempotently register a causal edge."""
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return aiohttp.web.json_response({"error": "invalid_body"}, status=400)
+        if not isinstance(body, dict):
+            return aiohttp.web.json_response({"error": "invalid_body"}, status=400)
+        source = str(body.get("source") or "").strip().lower()
+        target = str(body.get("target") or "").strip().lower()
+        weight_raw = body.get("weight")
+        if not isinstance(weight_raw, (int, float, str)):
+            return aiohttp.web.json_response({"error": "invalid_weight"}, status=400)
+        try:
+            weight = float(weight_raw)
+        except (TypeError, ValueError):
+            return aiohttp.web.json_response({"error": "invalid_weight"}, status=400)
+        if not source or not target or not 0.0 < weight <= 1.0:
+            return aiohttp.web.json_response({"error": "invalid_relationship"}, status=400)
+        graph.add_relation(source, target, weight)
+        return aiohttp.web.json_response(
+            {"source": source, "target": target, "weight": weight}, status=200
+        )
+
+    async def _handle_list_resolver_traces(request: aiohttp.web.Request) -> aiohttp.web.Response:
+        """GET /v1/resolver/traces — list durable resolver traces."""
+        if not config.inspector.enabled:
+            return aiohttp.web.json_response({"error": "inspector_disabled"}, status=503)
+        if history is None:
+            return aiohttp.web.json_response({"error": "signal_history_disabled"}, status=501)
+        try:
+            offset = max(0, int(request.rel_url.query.get("offset", "0")))
+            limit = min(max(1, int(request.rel_url.query.get("limit", "100"))), 500)
+        except ValueError:
+            return aiohttp.web.json_response({"error": "invalid_query_params"}, status=400)
+        traces = await history.list_traces(offset=offset, limit=limit + 1)
+        has_more = len(traces) > limit
+        items = traces[:limit]
+        return aiohttp.web.json_response(
+            {
+                "items": [dataclasses.asdict(trace) for trace in items],
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+            }
+        )
+
+    async def _handle_get_resolver_trace(request: aiohttp.web.Request) -> aiohttp.web.Response:
+        """GET /v1/resolver/traces/{signal_id} — return one resolver trace."""
+        if not config.inspector.enabled:
+            return aiohttp.web.json_response({"error": "inspector_disabled"}, status=503)
+        if history is None:
+            return aiohttp.web.json_response({"error": "signal_history_disabled"}, status=501)
+        trace = await history.get_trace(request.match_info["signal_id"])
+        if trace is None:
+            return aiohttp.web.json_response({"error": "not_found"}, status=404)
+        return aiohttp.web.json_response(dataclasses.asdict(trace))
 
     async def _handle(request: aiohttp.web.Request) -> aiohttp.web.Response:
         """Catch-all request handler — intercept writes, pass through reads."""
@@ -582,6 +758,12 @@ def build_app(
         _handle_get_inspector_signals,
     )
     app.router.add_get("/v1/inspector/graph", _handle_get_inspector_graph)
+    app.router.add_post("/v1/graph/relationships", _handle_relationship)
+    app.router.add_get("/v1/resolver/traces", _handle_list_resolver_traces)
+    app.router.add_get(
+        "/v1/resolver/traces/{signal_id}",
+        _handle_get_resolver_trace,
+    )
     app.router.add_get("/inspector", _handle_get_inspector_viewer)
     app.router.add_static(
         "/inspector/vendor",

@@ -32,6 +32,9 @@ from revok.models import (
     InspectionReport,
     MemoryAdapterResponse,
     PropagationPath,
+    PropagationTrace,
+    ResolutionTrace,
+    ResolvedTarget,
     Signal,
     SignalRecord,
 )
@@ -317,6 +320,18 @@ class GraphBackend(Protocol):
         """
         ...
 
+    def propagate_detailed(
+        self,
+        root_entity_id: str,
+        initial_pressure: float,
+        *,
+        max_hops: int,
+        min_pressure: float,
+        attenuation: float,
+    ) -> PropagationTrace:
+        """Propagate pressure and return traversal metadata for inspection."""
+        ...
+
     def close(self) -> None:
         """Release any resources held by this backend.
 
@@ -356,6 +371,36 @@ class SignalHistoryStore(Protocol):
 
         Must be idempotent — safe to call multiple times.
         """
+        ...
+
+
+@runtime_checkable
+class Resolver(Protocol):
+    """Map free-text external signals to graph targets."""
+
+    def resolve(self, signal_text: str) -> list[ResolvedTarget]:
+        """Return graph-targeted resolution results, ordered by confidence."""
+        ...
+
+
+@runtime_checkable
+class ResolverTraceStore(Protocol):
+    """Durable storage contract for resolver invocation traces."""
+
+    async def start_trace(self, trace: ResolutionTrace) -> None:
+        """Persist a pending trace."""
+        ...
+
+    async def finish_trace(self, trace: ResolutionTrace) -> None:
+        """Persist the completed or failed trace state."""
+        ...
+
+    async def get_trace(self, signal_id: str) -> ResolutionTrace | None:
+        """Return one trace by correlation ID."""
+        ...
+
+    async def list_traces(self, offset: int = 0, limit: int = 100) -> list[ResolutionTrace]:
+        """Return recent traces in descending creation order."""
         ...
 
 

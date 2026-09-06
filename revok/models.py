@@ -49,6 +49,74 @@ class Signal:
     original_body: bytes
     headers: dict[str, str]
     valid_time: float | None = None
+    signal_id: str | None = None
+    signal_text: str | None = None
+    resolved_targets: tuple["ResolvedTarget", ...] = ()
+    dropped_targets: tuple["DroppedTarget", ...] = ()
+
+
+@dataclass(frozen=True)
+class ResolvedTarget:
+    """A resolver's structural mapping from a signal to a graph node."""
+
+    entity_key: str
+    confidence: float
+    rationale: str
+
+
+@dataclass(frozen=True)
+class DroppedTarget:
+    """Resolver target omitted from processing and the reason it was dropped."""
+
+    entity_key: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class TargetValidationResult:
+    """Validated resolver targets plus non-fatal dropped-target diagnostics."""
+
+    targets: list[ResolvedTarget]
+    dropped_targets: list[DroppedTarget]
+
+
+@dataclass(frozen=True)
+class PropagationStep:
+    """One node reached during a forward causal traversal."""
+
+    entity_key: str
+    depth: int
+    pressure: float
+    parent_entity_key: str | None = None
+    edge_weight: float | None = None
+
+
+@dataclass(frozen=True)
+class PropagationTrace:
+    """Detailed propagation result for one root entity."""
+
+    root_entity_key: str
+    initial_pressure: float
+    steps: list[PropagationStep]
+    termination_reason: str
+
+
+@dataclass(frozen=True)
+class ResolutionTrace:
+    """Durable record of one resolver-backed signal invocation."""
+
+    signal_id: str
+    created_at: float
+    completed_at: float | None
+    source_id: str
+    signal_text: str
+    status: str
+    error_code: str | None
+    error_detail: str | None
+    targets: list[ResolvedTarget]
+    dropped_targets: list[DroppedTarget]
+    invalidations: list[SignalRecord]
+    propagation: list[PropagationTrace]
 
 
 @dataclass(frozen=True)
