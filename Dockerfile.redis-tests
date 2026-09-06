@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+# Test image for the Redis Streams signal source suite.
+# Not part of the production build; referenced only by compose.redis-tests.yaml.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY pyproject.toml ./
+COPY revok/ ./revok/
+COPY tests/ ./tests/
+
+RUN pip install --no-cache-dir -e ".[dev,redis]"
+
+CMD ["pytest", "tests/test_redis_source.py", "tests/test_integration_signal_source.py", "-v"]

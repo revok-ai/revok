@@ -120,6 +120,50 @@ class ResolutionTrace:
 
 
 @dataclass(frozen=True)
+class ProcessingOutcome:
+    """Result of one processing attempt, used to decide acknowledgment.
+
+    Attributes:
+        signal_id: Identifier of the processed signal.
+        status: ``applied``, ``duplicate``, or ``failed``.
+        failure_reason: Set only when *status* is ``failed``.
+        entity_keys: Entities locked and updated during processing.
+    """
+
+    signal_id: str
+    status: str
+    failure_reason: str | None = None
+    entity_keys: tuple[str, ...] = ()
+
+    @property
+    def should_ack(self) -> bool:
+        """Return ``True`` when the source may advance past this signal."""
+        return self.status in ("applied", "duplicate")
+
+
+@dataclass(frozen=True)
+class DedupeRecord:
+    """Durable evidence that a signal identifier was fully processed."""
+
+    signal_id: str
+    processed_at: float
+    source_name: str
+    entity_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeadLetterRecord:
+    """A signal set aside after exceeding the delivery attempt limit."""
+
+    signal_id: str
+    source_name: str
+    payload: str
+    delivery_attempts: int
+    failure_reason: str
+    dead_lettered_at: float
+
+
+@dataclass(frozen=True)
 class Entity:
     """A named concept extracted from signal content.
 

@@ -11,7 +11,9 @@ import logging
 import time
 
 from revok.config import CausalGraphConfig
+from revok.entity_locks import EntityLockRegistry
 from revok.interfaces import (
+    DedupeStore,
     GraphBackend,
     MessageBus,
     ResolverTraceStore,
@@ -19,7 +21,9 @@ from revok.interfaces import (
     StateStore,
 )
 from revok.models import (
+    DedupeRecord,
     EntityRecord,
+    ProcessingOutcome,
     PropagationTrace,
     ResolutionTrace,
     ResolvedTarget,
@@ -46,6 +50,8 @@ class SignalProcessor:
         config: CausalGraphConfig,
         history: SignalHistoryStore | None = None,
         trace_store: ResolverTraceStore | None = None,
+        dedupe: DedupeStore | None = None,
+        locks: EntityLockRegistry | None = None,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -54,6 +60,8 @@ class SignalProcessor:
         self._config = config
         self._history = history
         self._trace_store = trace_store
+        self._dedupe = dedupe
+        self._locks = locks or EntityLockRegistry()
 
     def _parse_signal_payload(self, signal: Signal) -> dict[str, object]:
         if not signal.original_body:
@@ -155,34 +163,50 @@ class SignalProcessor:
 
         return score_before, new_score, event
 
-    async def _apply_propagation(
-        self,
-        root_pressures: dict[str, float],
-        processing_time: float,
-        valid_time: float,
-        source_id: str,
-    ) -> tuple[list[SignalRecord], list[PropagationTrace]]:
-        """Apply propagation from all roots and keep max pressure per entity."""
-        aggregate: dict[str, tuple[float, str]] = {}
-        traces: list[PropagationTrace] = []
-        for root, root_pressure in root_pressures.items():
-            trace = self._graph.propagate_detailed(
+    def _compute_traces(
+        self, root_pressures: dict[str, float]
+    ) -> list[PropagationTrace]:
+        """Traverse propagation for every root without mutating any state."""
+        if not self._config.enabled:
+            return []
+        return [
+            self._graph.propagate_detailed(
                 root,
                 root_pressure,
                 max_hops=self._config.max_hops,
                 min_pressure=self._config.min_pressure,
                 attenuation=self._config.attenuation,
             )
-            traces.append(trace)
-            propagated = {
-                step.entity_key: step.pressure
-                for step in trace.steps
-                if step.entity_key != root
-            }
-            for entity_key, propagated_pressure in propagated.items():
-                current = aggregate.get(entity_key)
-                if current is None or propagated_pressure > current[0]:
-                    aggregate[entity_key] = (propagated_pressure, root)
+            for root, root_pressure in root_pressures.items()
+        ]
+
+    @staticmethod
+    def _affected_keys(
+        root_pressures: dict[str, float], traces: list[PropagationTrace]
+    ) -> set[str]:
+        """Return every entity key a signal will write, roots plus propagation."""
+        keys = set(root_pressures)
+        for trace in traces:
+            keys.update(step.entity_key for step in trace.steps)
+        return keys
+
+    async def _apply_propagation(
+        self,
+        traces: list[PropagationTrace],
+        processing_time: float,
+        valid_time: float,
+        source_id: str,
+    ) -> list[SignalRecord]:
+        """Apply propagation from all roots and keep max pressure per entity."""
+        aggregate: dict[str, tuple[float, str]] = {}
+        for trace in traces:
+            root = trace.root_entity_key
+            for step in trace.steps:
+                if step.entity_key == root:
+                    continue
+                current = aggregate.get(step.entity_key)
+                if current is None or step.pressure > current[0]:
+                    aggregate[step.entity_key] = (step.pressure, root)
 
         events: list[SignalRecord] = []
         for entity_key, (propagated_pressure, root) in aggregate.items():
@@ -203,15 +227,78 @@ class SignalProcessor:
                     entity_key,
                     exc_info=True,
                 )
-        return events, traces
+        return events
 
-    async def process_one(self, signal: Signal) -> None:
-        """Process one signal; all failures are logged and swallowed."""
+    async def process_one(self, signal: Signal) -> ProcessingOutcome:
+        """Process one signal; failures are logged and reported, never raised.
+
+        Returns:
+            ProcessingOutcome: ``applied``, ``duplicate``, or ``failed``. The
+            caller acknowledges the signal only when the outcome permits it.
+        """
+        signal_id = signal.signal_id or ""
         targets = self._resolve_targets(signal)
         if not targets:
             logger.info("Signal discarded: missing or empty entity_refs")
-            return
+            return ProcessingOutcome(signal_id=signal_id, status="applied")
 
+        if self._dedupe is None or not signal_id:
+            return await self._apply_signal(signal, targets, signal_id)
+
+        # The signal lock also serializes two concurrent deliveries of the same id.
+        async with self._locks.acquire_signal(signal_id):
+            try:
+                already_processed = await self._dedupe.has(signal_id)
+            except Exception:
+                logger.error(
+                    "Deduplication lookup failed for signal '%s'",
+                    signal_id,
+                    exc_info=True,
+                )
+                return ProcessingOutcome(
+                    signal_id=signal_id,
+                    status="failed",
+                    failure_reason="deduplication lookup failed",
+                )
+
+            if already_processed:
+                logger.info("Signal '%s' already processed; suppressing", signal_id)
+                return ProcessingOutcome(signal_id=signal_id, status="duplicate")
+
+            outcome = await self._apply_signal(signal, targets, signal_id)
+            if outcome.status != "applied":
+                return outcome
+
+            try:
+                await self._dedupe.record(
+                    DedupeRecord(
+                        signal_id=signal_id,
+                        processed_at=time.time(),
+                        source_name=signal.source_id,
+                        entity_keys=outcome.entity_keys,
+                    )
+                )
+            except Exception:
+                logger.error(
+                    "Deduplication record failed for signal '%s'",
+                    signal_id,
+                    exc_info=True,
+                )
+                return ProcessingOutcome(
+                    signal_id=signal_id,
+                    status="failed",
+                    failure_reason="deduplication record failed",
+                    entity_keys=outcome.entity_keys,
+                )
+            return outcome
+
+    async def _apply_signal(
+        self,
+        signal: Signal,
+        targets: list[ResolvedTarget],
+        signal_id: str,
+    ) -> ProcessingOutcome:
+        """Apply a signal while holding a lock on every entity it writes."""
         processing_time = time.time()
         valid_time = signal.timestamp if signal.timestamp > 0 else processing_time
         if valid_time > processing_time:
@@ -227,7 +314,44 @@ class SignalProcessor:
         root_pressures = {
             target.entity_key: pressure * target.confidence for target in targets
         }
+        lock_keys = self._affected_keys(root_pressures, self._compute_traces(root_pressures))
 
+        # Runtime relation registration can grow the reached set between the
+        # traversal above and lock acquisition, so re-traverse under lock.
+        for attempt in (0, 1):
+            async with self._locks.acquire_entities(lock_keys):
+                traces = self._compute_traces(root_pressures)
+                fresh_keys = self._affected_keys(root_pressures, traces)
+                if attempt == 0 and not fresh_keys <= lock_keys:
+                    lock_keys |= fresh_keys
+                    continue
+                return await self._apply_locked(
+                    signal,
+                    targets,
+                    root_pressures,
+                    traces,
+                    processing_time,
+                    valid_time,
+                    signal_id,
+                )
+
+        return ProcessingOutcome(
+            signal_id=signal_id,
+            status="failed",
+            failure_reason="entity lock set did not converge",
+        )
+
+    async def _apply_locked(
+        self,
+        signal: Signal,
+        targets: list[ResolvedTarget],
+        root_pressures: dict[str, float],
+        traces: list[PropagationTrace],
+        processing_time: float,
+        valid_time: float,
+        signal_id: str,
+    ) -> ProcessingOutcome:
+        failures: list[str] = []
         events: list[SignalRecord] = []
         for target in targets:
             try:
@@ -239,7 +363,8 @@ class SignalProcessor:
                     signal.source_id,
                 )
                 events.append(event)
-            except Exception:
+            except Exception as exc:
+                failures.append(f"{target.entity_key}: {exc}")
                 logger.error(
                     "SignalProcessor failed applying root entity '%s'",
                     target.entity_key,
@@ -247,15 +372,11 @@ class SignalProcessor:
                 )
 
         if self._config.enabled:
-            propagated_events, propagation = await self._apply_propagation(
-                root_pressures,
-                processing_time,
-                valid_time,
-                signal.source_id,
+            events.extend(
+                await self._apply_propagation(
+                    traces, processing_time, valid_time, signal.source_id
+                )
             )
-            events.extend(propagated_events)
-        else:
-            propagation = []
 
         if self._trace_store is not None and signal.signal_id is not None:
             try:
@@ -272,11 +393,23 @@ class SignalProcessor:
                         targets=targets,
                         dropped_targets=list(signal.dropped_targets),
                         invalidations=events,
-                        propagation=propagation,
+                        propagation=traces,
                     )
                 )
             except Exception:
                 logger.error("Resolver trace completion failed", exc_info=True)
+
+        entity_keys = tuple(event.entity_key for event in events)
+        if failures:
+            return ProcessingOutcome(
+                signal_id=signal_id,
+                status="failed",
+                failure_reason="; ".join(failures),
+                entity_keys=entity_keys,
+            )
+        return ProcessingOutcome(
+            signal_id=signal_id, status="applied", entity_keys=entity_keys
+        )
 
     async def run(self) -> None:
         """Consume indefinitely until cancelled or bus is closed."""

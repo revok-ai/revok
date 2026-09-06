@@ -162,3 +162,38 @@ logging:
 #   # The active write gate is the session-path anchor:
 #   #   POST /api/v1/sessions/{sessionId}/memory  (exact match, no prefix/suffix)
 #   # write_paths: []
+
+# ---------------------------------------------------------------------------
+# Signal ingestion sources (optional)
+#
+# HTTP is the default source and needs no extra dependency. The durable Redis
+# Streams source survives restarts and redelivers unacknowledged signals; it
+# requires the optional extra:  pip install 'revok[redis]'
+# ---------------------------------------------------------------------------
+# sources:
+#   http:
+#     enabled: true
+#   redis_streams:
+#     enabled: false
+#     # Required when enabled.
+#     url: "redis://localhost:6379"
+#     stream: "revok:signals"
+#     consumer_group: "revok"
+#     consumer_name: "revok-1"
+#     block_ms: 5000
+#     batch_size: 10
+#     # Delivery attempts before a signal is dead-lettered and the stream advances.
+#     max_delivery_attempts: 3
+
+# ---------------------------------------------------------------------------
+# Ingestion controls (optional)
+#
+# Deduplication makes at-least-once delivery safe: a redelivered signal must not
+# apply pressure twice. It is stored independently of signal history, so
+# disabling tracing never disables idempotency.
+# ---------------------------------------------------------------------------
+# ingestion:
+#   # Instance-wide deduplication rows retained; oldest evicted first.
+#   dedupe_max_rows: 100000
+#   # Signals processed concurrently per source.
+#   max_concurrent_signals: 16

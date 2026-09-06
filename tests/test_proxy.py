@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 from aiohttp import web
@@ -25,8 +26,10 @@ from revok.config import (
 )
 from revok.entity_matcher import EntityMatcher
 from revok.adapters import Mem0Adapter
+from revok.models import DeadLetterRecord
 from revok.proxy import SIGNAL_PROCESSOR_TASK_KEY, build_app
 from revok.scoring import ScoringEngine
+from revok.signal_dedupe import SqliteIngestionStore
 from revok.state_store import SqliteStateStore
 
 
@@ -1202,4 +1205,121 @@ async def test_inspector_vendor_static_asset(tmp_path: Path) -> None:
             assert resp.status == 200
             assert resp.content_type in ("application/javascript", "text/javascript")
     finally:
+        await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Dead-letter endpoints (feature 009)
+# ---------------------------------------------------------------------------
+
+
+def _dead_letter(signal_id: str) -> DeadLetterRecord:
+    return DeadLetterRecord(
+        signal_id=signal_id,
+        source_name="redis_streams",
+        payload='{"entity_refs": ["alpha"]}',
+        delivery_attempts=4,
+        failure_reason="store unavailable",
+        dead_lettered_at=1.0,
+    )
+
+
+async def test_dead_letter_endpoints_return_set_aside_signals(tmp_path: Path) -> None:
+    config = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        app = build_app(
+            config,
+            store,
+            EntityMatcher(config.entity_matcher),
+            ScoringEngine(config.scoring),
+        )
+        async with TestClient(TestServer(app)) as client:
+            empty = await client.get("/v1/signals/dead-letters")
+            assert empty.status == 200
+            assert (await empty.json())["items"] == []
+
+            side = SqliteIngestionStore(config.state_store.sqlite_path)
+            await side.open()
+            await side.dead_letter(_dead_letter("dl-1"))
+            await side.close()
+
+            listed = await client.get("/v1/signals/dead-letters")
+            body = await listed.json()
+            assert body["items"][0]["signal_id"] == "dl-1"
+            assert body["items"][0]["delivery_attempts"] == 4
+            assert body["has_more"] is False
+
+            detail = await client.get("/v1/signals/dead-letters/dl-1")
+            assert detail.status == 200
+            assert (await detail.json())["failure_reason"] == "store unavailable"
+
+            missing = await client.get("/v1/signals/dead-letters/nope")
+            assert missing.status == 404
+
+            bad = await client.get("/v1/signals/dead-letters?limit=abc")
+            assert bad.status == 400
+    finally:
+        await store.close()
+
+
+async def test_dead_letter_endpoints_respect_inspector_disabled(
+    tmp_path: Path,
+) -> None:
+    base = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    config = dataclasses.replace(base, inspector=InspectorConfig(enabled=False))
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        app = build_app(
+            config,
+            store,
+            EntityMatcher(config.entity_matcher),
+            ScoringEngine(config.scoring),
+        )
+        async with TestClient(TestServer(app)) as client:
+            listed = await client.get("/v1/signals/dead-letters")
+            detail = await client.get("/v1/signals/dead-letters/dl-1")
+            assert listed.status == 503
+            assert detail.status == 503
+    finally:
+        await store.close()
+
+
+async def test_missing_redis_extra_keeps_http_ingest_working(
+    tmp_path: Path, caplog
+) -> None:
+    """Enabling the durable source without the extra must not be fatal."""
+    import revok.redis_source as redis_source
+    from revok.config import RedisStreamsSourceConfig, SignalSourcesConfig
+
+    base = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    config = dataclasses.replace(
+        base,
+        sources=SignalSourcesConfig(
+            redis_streams=RedisStreamsSourceConfig(
+                enabled=True, url="redis://localhost:6379"
+            )
+        ),
+    )
+    original = redis_source._REDIS_AVAILABLE
+    redis_source._REDIS_AVAILABLE = False
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        with caplog.at_level("ERROR"):
+            app = build_app(
+                config,
+                store,
+                EntityMatcher(config.entity_matcher),
+                ScoringEngine(config.scoring),
+            )
+        assert "revok[redis]" in caplog.text
+
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/signals", json={"entity_refs": ["alpha"]})
+            assert resp.status == 202
+    finally:
+        redis_source._REDIS_AVAILABLE = original
         await store.close()

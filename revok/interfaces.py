@@ -26,6 +26,8 @@ from __future__ import annotations
 from typing import AsyncIterator, Protocol, runtime_checkable
 
 from revok.models import (
+    DeadLetterRecord,
+    DedupeRecord,
     DownstreamEntity,
     EntityRecord,
     EnrichedPayload,
@@ -42,9 +44,13 @@ from revok.models import (
 
 @runtime_checkable
 class SignalSource(Protocol):
-    """A source that delivers raw memory signals to the Revok pipeline."""
+    """A source that delivers raw memory signals to the Revok pipeline.
 
-    async def receive(self) -> AsyncIterator[Signal]:
+    Implementations must not assume a transport. HTTP has no acknowledgment
+    semantics; durable transports do.
+    """
+
+    def receive(self) -> AsyncIterator[Signal]:
         """Yield incoming signals one at a time.
 
         Yields:
@@ -52,6 +58,14 @@ class SignalSource(Protocol):
 
         The iterator runs until the source is exhausted or the coroutine
         is cancelled. Implementations must not block the event loop.
+        """
+        ...
+
+    async def ack(self, signal: Signal) -> None:
+        """Report *signal* as successfully processed.
+
+        Allows the source to advance its position. Must be a no-op, never an
+        error, on transports without acknowledgment semantics.
         """
         ...
 
@@ -401,6 +415,42 @@ class ResolverTraceStore(Protocol):
 
     async def list_traces(self, offset: int = 0, limit: int = 100) -> list[ResolutionTrace]:
         """Return recent traces in descending creation order."""
+        ...
+
+
+@runtime_checkable
+class DedupeStore(Protocol):
+    """Durable record of fully processed signal identifiers.
+
+    Storage MUST be independent of trace and inspection storage so that
+    disabling trace recording cannot disable idempotency.
+    """
+
+    async def has(self, signal_id: str) -> bool:
+        """Return ``True`` if *signal_id* was already fully processed."""
+        ...
+
+    async def record(self, entry: DedupeRecord) -> None:
+        """Persist *entry*, evicting oldest rows beyond the configured bound."""
+        ...
+
+
+@runtime_checkable
+class DeadLetterStore(Protocol):
+    """Durable store of signals set aside after exceeding the attempt limit."""
+
+    async def dead_letter(self, entry: DeadLetterRecord) -> None:
+        """Persist *entry* before the originating source acknowledges it."""
+        ...
+
+    async def get_dead_letter(self, signal_id: str) -> DeadLetterRecord | None:
+        """Return one dead-letter record, or ``None`` when unknown."""
+        ...
+
+    async def list_dead_letters(
+        self, offset: int = 0, limit: int = 100
+    ) -> list[DeadLetterRecord]:
+        """Return dead-letter records newest first."""
         ...
 
 

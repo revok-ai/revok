@@ -1,3 +1,22 @@
+# Default build context exclusions.
+#
+# WARNING: excluding a path here makes a COPY of that path fail with
+# "not found" in any Dockerfile using this context, and the error never
+# mentions .dockerignore. Three builds have broken this way already
+# (revok.yaml, examples/, tests/), so record the coupling below.
+#
+# Which builds depend on the exceptions in this file:
+#   examples/ + !examples/subscription_demo/{server,agent,database,demo_state}.py
+#       -> examples/subscription_demo/Dockerfile.api
+#   examples/ + !examples/subscription_demo/revok.yaml
+#       -> examples/subscription_demo/Dockerfile.revok
+#
+# Builds that need paths this file excludes use their own ignore file, since
+# Docker prefers <dockerfile-name>.dockerignore over this one:
+#   Dockerfile.falkordblite-tests -> Dockerfile.falkordblite-tests.dockerignore
+#   Dockerfile.redis-tests        -> Dockerfile.redis-tests.dockerignore
+# Both re-include tests/, which stays excluded here to keep production
+# images lean. Adding an exclusion here means updating those files too.
 .git
 .venv
 __pycache__

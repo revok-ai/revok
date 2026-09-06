@@ -56,9 +56,15 @@ from revok.models import (
 )
 from revok.resolver_runtime import invoke_resolver
 from revok.scoring import ScoringEngine
+from revok.signal_dedupe import SqliteIngestionStore
 from revok.signal_history import SqliteSignalHistoryStore
 from revok.signal_processor import SignalProcessor
 from revok.signal_queue import AsyncioQueueBus
+from revok.signal_sources import (
+    HttpSignalSource,
+    SourceRunner,
+    SourceSupervisor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +180,13 @@ def build_app(
             config.inspector.signal_history_max_rows,
         )
 
+    # Deliberately not gated by the history flag: disabling tracing must never
+    # disable idempotency.
+    ingestion = SqliteIngestionStore(
+        config.state_store.sqlite_path,
+        config.ingestion.dedupe_max_rows,
+    )
+
     processor = SignalProcessor(
         _bus,
         store,
@@ -182,6 +195,7 @@ def build_app(
         config.causal_graph,
         history=history,
         trace_store=history,
+        dedupe=ingestion,
     )
     inspector = RevokInspector(store, cast(GraphReader, graph), history)
 
@@ -459,7 +473,7 @@ def build_app(
         entity_refs: list[str] = entity_refs_value or []
         signal_text = str(parsed.get("signal_text") or "").strip()
         source: str = str(parsed.get("source") or "webhook")
-        signal_id = str(uuid.uuid4())
+        signal_id = str(parsed.get("signal_id") or uuid.uuid4())
         resolved_targets = []
         dropped_targets = []
         created_at = time.time()
@@ -717,13 +731,77 @@ def build_app(
             headers=safe_headers,
         )
 
+    async def _handle_list_dead_letters(
+        request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        """GET /v1/signals/dead-letters — signals set aside after the attempt bound."""
+        if not config.inspector.enabled:
+            return aiohttp.web.json_response({"error": "inspector_disabled"}, status=503)
+        try:
+            offset = max(0, int(request.rel_url.query.get("offset", "0")))
+            limit = min(max(1, int(request.rel_url.query.get("limit", "100"))), 500)
+        except ValueError:
+            return aiohttp.web.json_response({"error": "invalid_query_params"}, status=400)
+        records = await ingestion.list_dead_letters(offset=offset, limit=limit + 1)
+        has_more = len(records) > limit
+        return aiohttp.web.json_response(
+            {
+                "items": [dataclasses.asdict(r) for r in records[:limit]],
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+            }
+        )
+
+    async def _handle_get_dead_letter(
+        request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        """GET /v1/signals/dead-letters/{signal_id} — one set-aside signal."""
+        if not config.inspector.enabled:
+            return aiohttp.web.json_response({"error": "inspector_disabled"}, status=503)
+        record = await ingestion.get_dead_letter(request.match_info["signal_id"])
+        if record is None:
+            return aiohttp.web.json_response({"error": "not_found"}, status=404)
+        return aiohttp.web.json_response(dataclasses.asdict(record))
+
     app = aiohttp.web.Application(middlewares=[basic_auth_middleware])
     app[SIGNAL_PROCESSOR_TASK_KEY] = None
+
+    runners: list[SourceRunner] = []
+    if config.sources.http.enabled:
+        runners.append(
+            SourceRunner(
+                HttpSignalSource(_bus),
+                processor,
+                name="http",
+                max_concurrent=config.ingestion.max_concurrent_signals,
+            )
+        )
+    if config.sources.redis_streams.enabled:
+        try:
+            from revok.redis_source import RedisStreamsSignalSource
+
+            runners.append(
+                SourceRunner(
+                    RedisStreamsSignalSource(config.sources.redis_streams, ingestion),
+                    processor,
+                    name="redis_streams",
+                    max_concurrent=config.ingestion.max_concurrent_signals,
+                    resolver=resolver,
+                    graph=cast(GraphReader, graph),
+                )
+            )
+        except ImportError as exc:
+            logger.error(
+                "Durable signal source disabled; HTTP ingestion continues. %s", exc
+            )
+    supervisor = SourceSupervisor(runners)
 
     async def _on_startup(_: aiohttp.web.Application) -> None:
         if history is not None:
             await history.open()
-        app[SIGNAL_PROCESSOR_TASK_KEY] = asyncio.create_task(processor.run())
+        await ingestion.open()
+        app[SIGNAL_PROCESSOR_TASK_KEY] = asyncio.create_task(supervisor.run())
 
     async def _on_cleanup(_: aiohttp.web.Application) -> None:
         task = app.get(SIGNAL_PROCESSOR_TASK_KEY)
@@ -733,6 +811,8 @@ def build_app(
                 await task
             except asyncio.CancelledError:
                 pass
+        await supervisor.close()
+        await ingestion.close()
         if history is not None:
             await history.close()
         try:
@@ -763,6 +843,11 @@ def build_app(
     app.router.add_get(
         "/v1/resolver/traces/{signal_id}",
         _handle_get_resolver_trace,
+    )
+    app.router.add_get("/v1/signals/dead-letters", _handle_list_dead_letters)
+    app.router.add_get(
+        "/v1/signals/dead-letters/{signal_id}",
+        _handle_get_dead_letter,
     )
     app.router.add_get("/inspector", _handle_get_inspector_viewer)
     app.router.add_static(
