@@ -23,6 +23,7 @@ import logging
 import networkx as nx  # type: ignore[import-untyped]
 
 from revok.interfaces import GraphBackend, GraphReader
+from revok.models import PropagationStep, PropagationTrace
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,119 @@ class CausalGraph(GraphBackend, GraphReader):
             frontier = next_frontier
 
         return result
+
+    def propagate_detailed(
+        self,
+        root_entity_id: str,
+        initial_pressure: float,
+        *,
+        max_hops: int,
+        min_pressure: float,
+        attenuation: float,
+    ) -> PropagationTrace:
+        """Propagate pressure and retain traversal metadata and stop reason."""
+        if max_hops < 0:
+            raise ValueError("max_hops must be >= 0")
+        if min_pressure < 0.0 or min_pressure > 1.0:
+            raise ValueError("min_pressure must be in [0, 1]")
+        if attenuation <= 0.0 or attenuation > 1.0:
+            raise ValueError("attenuation must be in (0, 1]")
+
+        root_pressure = float(initial_pressure)
+        root_step = PropagationStep(
+            entity_key=root_entity_id,
+            depth=0,
+            pressure=root_pressure,
+        )
+        if root_pressure <= 0.0:
+            return PropagationTrace(
+                root_entity_key=root_entity_id,
+                initial_pressure=root_pressure,
+                steps=[root_step],
+                termination_reason="min_pressure",
+            )
+        if not self._graph.has_node(root_entity_id):
+            return PropagationTrace(
+                root_entity_key=root_entity_id,
+                initial_pressure=root_pressure,
+                steps=[],
+                termination_reason="completed",
+            )
+
+        frontier: dict[str, float] = {root_entity_id: root_pressure}
+        seen: set[str] = {root_entity_id}
+        result: dict[str, float] = {}
+        steps = [root_step]
+        below_floor = False
+
+        for depth in range(1, max_hops + 1):
+            next_frontier: dict[str, tuple[float, str, float]] = {}
+            saw_candidate = False
+            for source_id, source_pressure in frontier.items():
+                for target_id in self._graph.successors(source_id):
+                    if target_id in seen:
+                        continue
+                    saw_candidate = True
+                    edge_weight = float(self._graph[source_id][target_id].get("weight", 1.0))
+                    pressure = source_pressure * edge_weight * attenuation
+                    if pressure < min_pressure:
+                        below_floor = True
+                        continue
+                    current = next_frontier.get(target_id)
+                    if current is None or pressure > current[0]:
+                        next_frontier[target_id] = (pressure, source_id, edge_weight)
+
+            if not next_frontier:
+                reason = "min_pressure" if below_floor and saw_candidate else "completed"
+                return PropagationTrace(
+                    root_entity_key=root_entity_id,
+                    initial_pressure=root_pressure,
+                    steps=steps,
+                    termination_reason=reason,
+                )
+
+            for entity_key, (pressure, parent_id, edge_weight) in next_frontier.items():
+                result[entity_key] = pressure
+                steps.append(
+                    PropagationStep(
+                        entity_key=entity_key,
+                        depth=depth,
+                        pressure=pressure,
+                        parent_entity_key=parent_id,
+                        edge_weight=edge_weight,
+                    )
+                )
+            seen.update(next_frontier)
+            frontier = {key: value[0] for key, value in next_frontier.items()}
+
+        has_eligible_successor = False
+        has_below_floor_successor = False
+        for source_id, source_pressure in frontier.items():
+            for target_id in self._graph.successors(source_id):
+                if target_id in seen:
+                    continue
+                pressure = (
+                    source_pressure
+                    * float(self._graph[source_id][target_id].get("weight", 1.0))
+                    * attenuation
+                )
+                if pressure < min_pressure:
+                    has_below_floor_successor = True
+                else:
+                    has_eligible_successor = True
+
+        if has_eligible_successor:
+            reason = "max_hops"
+        elif has_below_floor_successor:
+            reason = "min_pressure"
+        else:
+            reason = "completed"
+        return PropagationTrace(
+            root_entity_key=root_entity_id,
+            initial_pressure=root_pressure,
+            steps=steps,
+            termination_reason=reason,
+        )
 
     @property
     def node_count(self) -> int:
