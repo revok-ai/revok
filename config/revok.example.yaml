@@ -105,8 +105,13 @@ causal_graph:
   min_pressure: 0.05
   # Per-hop attenuation multiplier.
   attenuation: 0.8
-  # Processing timeout for one consumed signal.
-  processing_timeout_seconds: 2.0
+  # Processing timeout for one consumed signal, including resolver invocation
+  # when a resolver is configured. Must exceed resolver_timeout_seconds, or
+  # resolution is guaranteed to abort before it can complete.
+  processing_timeout_seconds: 60.0
+  # Bound on a single resolver invocation. LLM-backed resolvers routinely take
+  # several seconds; raise this if your resolver is slower.
+  resolver_timeout_seconds: 30.0
   # Optional directed weighted relationships used for propagation.
   relationships:
     - source: "apex_hoodie"

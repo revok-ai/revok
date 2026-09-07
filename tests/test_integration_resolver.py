@@ -31,6 +31,21 @@ class ZeroMatchResolver:
         return []
 
 
+class FailingResolver:
+    def resolve(self, signal_text: str) -> list[ResolvedTarget]:
+        raise RuntimeError("boom")
+
+
+class SlowResolver:
+    """Sleeps past the configured resolver timeout, as a slow LLM call would."""
+
+    def resolve(self, signal_text: str) -> list[ResolvedTarget]:
+        import time
+
+        time.sleep(0.2)
+        return [ResolvedTarget("a", 0.9, "too slow to matter")]
+
+
 async def test_free_text_signal_propagates_and_trace_is_retrievable(
     minimal_config: Config,
     tmp_path: Path,
@@ -154,3 +169,94 @@ async def test_zero_match_signal_persists_completed_empty_trace(
             assert trace["propagation"] == []
     finally:
         await store.close()
+
+
+async def test_resolver_exception_populates_error_detail(
+    minimal_config: Config,
+    tmp_path: Path,
+) -> None:
+    config = replace(
+        minimal_config,
+        state_store=replace(minimal_config.state_store, sqlite_path=str(tmp_path / "failing.db")),
+        causal_graph=CausalGraphConfig(enabled=True),
+        inspector=InspectorConfig(
+            enabled=True,
+            signal_history_enabled=True,
+            signal_history_max_rows=100,
+        ),
+    )
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        app = build_app(
+            config,
+            store,
+            EntityMatcher(config.entity_matcher),
+            ScoringEngine(config.scoring),
+            resolver=FailingResolver(),
+        )
+        async with TestClient(TestServer(app)) as client:
+            response = await client.post(
+                "/signals",
+                json={"signal_text": "anything", "severity": "medium"},
+            )
+            assert response.status == 502
+            body = await response.json()
+            assert body["error"] == "resolver_failed"
+            assert body["error_detail"] == "RuntimeError: boom"
+
+            trace_response = await client.get(
+                f"/v1/resolver/traces/{body['signal_id']}"
+            )
+            trace = await trace_response.json()
+            assert trace["status"] == "failed"
+            assert trace["error_detail"] == "RuntimeError: boom"
+    finally:
+        await store.close()
+
+
+async def test_resolver_timeout_populates_distinguishable_error_detail(
+    minimal_config: Config,
+    tmp_path: Path,
+) -> None:
+    config = replace(
+        minimal_config,
+        state_store=replace(minimal_config.state_store, sqlite_path=str(tmp_path / "slow.db")),
+        causal_graph=CausalGraphConfig(enabled=True, resolver_timeout_seconds=0.05),
+        inspector=InspectorConfig(
+            enabled=True,
+            signal_history_enabled=True,
+            signal_history_max_rows=100,
+        ),
+    )
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        app = build_app(
+            config,
+            store,
+            EntityMatcher(config.entity_matcher),
+            ScoringEngine(config.scoring),
+            resolver=SlowResolver(),
+        )
+        async with TestClient(TestServer(app)) as client:
+            response = await client.post(
+                "/signals",
+                json={"signal_text": "anything", "severity": "medium"},
+            )
+            assert response.status == 502
+            body = await response.json()
+            expected = "TimeoutError: resolver exceeded 0.05s"
+            assert body["error_detail"] == expected
+
+            trace_response = await client.get(
+                f"/v1/resolver/traces/{body['signal_id']}"
+            )
+            trace = await trace_response.json()
+            assert trace["error_detail"] == expected
+            # A timeout must never be reported the same as a generic exception
+            # or a zero-match result — each requires a different response.
+            assert trace["error_detail"] != "RuntimeError: boom"
+    finally:
+        await store.close()
+

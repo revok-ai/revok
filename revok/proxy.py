@@ -42,7 +42,7 @@ import aiohttp.web
 
 from revok.adapters import AdapterClass, _REGISTRY, build_adapter
 from revok.causal_graph import CausalGraph
-from revok.config import CausalGraphConfig, Config
+from revok.config import CausalGraphConfig, Config, ConfigError
 from revok.entity_matcher import EntityMatcher
 from revok.inspector import EntityNotFoundError, RevokInspector
 from revok.interfaces import GraphBackend, GraphReader, Resolver, StateStore
@@ -127,6 +127,18 @@ async def basic_auth_middleware(
         body=b"Authentication required",
     )
 
+def _format_resolver_error(exc: Exception, timeout_seconds: float) -> str:
+    """Format a resolver failure for the trace and HTTP response.
+
+    ``asyncio.TimeoutError`` carries no message by default, which is exactly
+    the case callers most need distinguished from a resolver exception or a
+    zero-match result. Never includes a stack trace.
+    """
+    if isinstance(exc, asyncio.TimeoutError):
+        return f"TimeoutError: resolver exceeded {timeout_seconds}s"
+    return f"{type(exc).__name__}: {exc}"
+
+
 def build_app(
     config: Config,
     store: StateStore,
@@ -165,7 +177,27 @@ def build_app(
     Returns:
         :class:`aiohttp.web.Application` ready for
         :class:`aiohttp.web.AppRunner`.
+
+    Raises:
+        ConfigError: If *resolver* is provided and
+            ``causal_graph.processing_timeout_seconds`` does not exceed
+            ``causal_graph.resolver_timeout_seconds`` — that combination
+            guarantees the outer timeout aborts resolution before it can
+            complete.
     """
+    if resolver is not None and (
+        config.causal_graph.processing_timeout_seconds
+        <= config.causal_graph.resolver_timeout_seconds
+    ):
+        raise ConfigError(
+            "causal_graph.processing_timeout_seconds "
+            f"({config.causal_graph.processing_timeout_seconds}s) must be greater "
+            "than causal_graph.resolver_timeout_seconds "
+            f"({config.causal_graph.resolver_timeout_seconds}s) when a resolver is "
+            "configured, or resolver invocation is guaranteed to be aborted by the "
+            "outer processing timeout."
+        )
+
     adapter_cls: AdapterClass = _REGISTRY[config.adapter_type]
 
     _bus = bus if bus is not None else AsyncioQueueBus()
@@ -520,16 +552,20 @@ def build_app(
                     resolver,
                     signal_text,
                     cast(GraphReader, graph),
+                    timeout_seconds=config.causal_graph.resolver_timeout_seconds,
                 )
                 resolved_targets = validation.targets
                 dropped_targets = validation.dropped_targets
             except Exception as exc:
+                detail = _format_resolver_error(
+                    exc, config.causal_graph.resolver_timeout_seconds
+                )
                 failed = dataclasses.replace(
                     pending_trace,
                     completed_at=time.time(),
                     status="failed",
                     error_code="resolver_failed",
-                    error_detail=str(exc),
+                    error_detail=detail,
                 )
                 if history is not None:
                     await history.finish_trace(failed)
@@ -537,7 +573,11 @@ def build_app(
                     status=502,
                     content_type="application/json",
                     body=json.dumps(
-                        {"error": "resolver_failed", "signal_id": signal_id}
+                        {
+                            "error": "resolver_failed",
+                            "signal_id": signal_id,
+                            "error_detail": detail,
+                        }
                     ).encode(),
                 )
             if not resolved_targets:
@@ -789,6 +829,7 @@ def build_app(
                     max_concurrent=config.ingestion.max_concurrent_signals,
                     resolver=resolver,
                     graph=cast(GraphReader, graph),
+                    resolver_timeout=config.causal_graph.resolver_timeout_seconds,
                 )
             )
         except ImportError as exc:

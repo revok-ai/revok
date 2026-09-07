@@ -451,10 +451,30 @@ class TestCausalGraphConfig:
         assert cfg.causal_graph.max_hops == 2
         assert cfg.causal_graph.min_pressure == 0.05
         assert cfg.causal_graph.attenuation == 0.8
-        assert cfg.causal_graph.processing_timeout_seconds == 2.0
+        assert cfg.causal_graph.processing_timeout_seconds == 60.0
+        assert cfg.causal_graph.resolver_timeout_seconds == 30.0
         assert cfg.causal_graph.relationships == []
         assert cfg.causal_graph.graph_backend == "networkx"
         assert cfg.causal_graph.graph_backend_db_path is None
+
+    def test_resolver_timeout_seconds_loaded_from_yaml(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ncausal_graph:\n  resolver_timeout_seconds: 45.0\n"
+        cfg = load_config(_write_yaml(tmp_path, yaml))
+        assert cfg.causal_graph.resolver_timeout_seconds == 45.0
+        # Loading resolver_timeout_seconds alone must not require the caller
+        # to also set processing_timeout_seconds; the cross-field invariant is
+        # only enforced once a resolver is actually configured, at build_app.
+        assert cfg.causal_graph.processing_timeout_seconds == 60.0
+
+    def test_resolver_timeout_seconds_non_positive_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ncausal_graph:\n  resolver_timeout_seconds: 0\n"
+        with pytest.raises(ConfigError, match="resolver_timeout_seconds"):
+            load_config(_write_yaml(tmp_path, yaml))
+
+    def test_processing_timeout_seconds_non_positive_raises(self, tmp_path: Path) -> None:
+        yaml = VALID_YAML + "\ncausal_graph:\n  processing_timeout_seconds: -1\n"
+        with pytest.raises(ConfigError, match="processing_timeout_seconds"):
+            load_config(_write_yaml(tmp_path, yaml))
 
     def test_causal_graph_relationships_loaded(self, tmp_path: Path) -> None:
         yaml = (

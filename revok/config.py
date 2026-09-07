@@ -186,7 +186,13 @@ class CausalGraphConfig:
         max_hops: Maximum BFS depth from root entities.
         min_pressure: Minimum pressure retained during propagation.
         attenuation: Per-hop attenuation multiplier.
-        processing_timeout_seconds: Bounded processing timeout for one signal batch.
+        processing_timeout_seconds: Bounded processing timeout for one signal
+            batch, including resolver invocation when a resolver is configured.
+            Must exceed ``resolver_timeout_seconds`` or resolution is
+            guaranteed to abort before it can complete.
+        resolver_timeout_seconds: Bound on a single resolver invocation.
+            LLM-backed resolvers routinely take several seconds; the default
+            leaves headroom above typical latency.
         relationships: Directed weighted edges loaded at startup.
     """
 
@@ -194,7 +200,8 @@ class CausalGraphConfig:
     max_hops: int = 2
     min_pressure: float = 0.05
     attenuation: float = 0.8
-    processing_timeout_seconds: float = 2.0
+    processing_timeout_seconds: float = 60.0
+    resolver_timeout_seconds: float = 30.0
     relationships: list["CausalRelationshipConfig"] = field(default_factory=list)
     graph_backend: str = "networkx"
     graph_backend_db_path: str | None = None
@@ -607,7 +614,8 @@ def load_config(path: str) -> Config:
     cg_max_hops = cg_raw.get("max_hops", 2)
     cg_min_pressure = cg_raw.get("min_pressure", 0.05)
     cg_attenuation = cg_raw.get("attenuation", 0.8)
-    cg_timeout = cg_raw.get("processing_timeout_seconds", 2.0)
+    cg_timeout = cg_raw.get("processing_timeout_seconds", 60.0)
+    cg_resolver_timeout = cg_raw.get("resolver_timeout_seconds", 30.0)
 
     if not isinstance(cg_max_hops, int) or cg_max_hops < 0:
         raise ConfigError("causal_graph.max_hops must be an integer >= 0.")
@@ -617,6 +625,8 @@ def load_config(path: str) -> Config:
         raise ConfigError("causal_graph.attenuation must be in (0, 1].")
     if not isinstance(cg_timeout, (int, float)) or float(cg_timeout) <= 0.0:
         raise ConfigError("causal_graph.processing_timeout_seconds must be > 0.")
+    if not isinstance(cg_resolver_timeout, (int, float)) or float(cg_resolver_timeout) <= 0.0:
+        raise ConfigError("causal_graph.resolver_timeout_seconds must be > 0.")
 
     cg_graph_backend = str(cg_raw.get("graph_backend", "networkx"))
     if cg_graph_backend not in {"networkx", "falkordb-lite"}:
@@ -661,6 +671,7 @@ def load_config(path: str) -> Config:
         min_pressure=float(cg_min_pressure),
         attenuation=float(cg_attenuation),
         processing_timeout_seconds=float(cg_timeout),
+        resolver_timeout_seconds=float(cg_resolver_timeout),
         relationships=relationships,
         graph_backend=cg_graph_backend,
         graph_backend_db_path=cg_graph_backend_db_path,

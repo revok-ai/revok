@@ -18,7 +18,13 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   application.
 - `POST /signals` accepts a `signal_text` field, resolved to target nodes at
   ingestion. Explicit `entity_refs` continue to take precedence and bypass the
-  resolver entirely, so existing callers are unaffected.
+  resolver entirely, so existing callers are unaffected. Resolver invocation is
+  bounded by a configurable `causal_graph.resolver_timeout_seconds` (default
+  `30.0`), sized for LLM-backed resolvers rather than a fixed low ceiling.
+  A resolver failure — including a timeout — returns `502 resolver_failed`
+  with an `error_detail` naming the exception type and message, so a timeout,
+  an internal resolver exception, and a zero-match result are distinguishable
+  by the caller; the same detail is persisted on the failed resolution trace.
 - Root pressure is scaled by resolution confidence —
   `pressure_for_severity(severity) * target.confidence`. Scaling applies at the
   root only; downstream attenuation is unchanged. Explicit `entity_refs` are
@@ -60,6 +66,12 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   propagation-set keys. Same-entity signals apply in arrival order regardless
   of which source delivered them, while unrelated entities continue to process
   concurrently. Sorted acquisition keeps overlapping key sets deadlock-free.
+- `causal_graph.processing_timeout_seconds` — the outer bound on processing one
+  signal, including resolver invocation — defaults to `60.0`, giving an
+  LLM-backed resolver headroom to complete within it. `build_app` validates at
+  startup that it exceeds `resolver_timeout_seconds` whenever a resolver is
+  configured, raising a `ConfigError` rather than allowing a combination that
+  guarantees resolution aborts.
 - New config sections: `sources` (`http`, `redis_streams`) and `ingestion`
   (`dedupe_max_rows`, default `100000`; `max_concurrent_signals`, default `16`).
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer, TestClient
 
@@ -1322,4 +1323,64 @@ async def test_missing_redis_extra_keeps_http_ingest_working(
             assert resp.status == 202
     finally:
         redis_source._REDIS_AVAILABLE = original
+        await store.close()
+
+
+async def test_build_app_rejects_processing_timeout_not_exceeding_resolver_timeout(
+    tmp_path: Path,
+) -> None:
+    """A resolver configured with the outer timeout too tight must fail fast."""
+    from revok.config import ConfigError
+    from revok.models import ResolvedTarget
+
+    class StubResolver:
+        def resolve(self, signal_text: str) -> list[ResolvedTarget]:
+            return []
+
+    base = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    config = dataclasses.replace(
+        base,
+        causal_graph=CausalGraphConfig(
+            processing_timeout_seconds=10.0,
+            resolver_timeout_seconds=10.0,  # not strictly greater: must reject
+        ),
+    )
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        with pytest.raises(ConfigError, match="resolver_timeout_seconds"):
+            build_app(
+                config,
+                store,
+                EntityMatcher(config.entity_matcher),
+                ScoringEngine(config.scoring),
+                resolver=StubResolver(),
+            )
+    finally:
+        await store.close()
+
+
+async def test_build_app_skips_timeout_validation_without_a_resolver(
+    tmp_path: Path,
+) -> None:
+    """The same timeout combination is fine when no resolver is configured."""
+    base = _config_with_upstream("http://127.0.0.1:1", tmp_path)
+    config = dataclasses.replace(
+        base,
+        causal_graph=CausalGraphConfig(
+            processing_timeout_seconds=10.0,
+            resolver_timeout_seconds=10.0,
+        ),
+    )
+    store = SqliteStateStore(config.state_store)
+    await store.open()
+    try:
+        app = build_app(
+            config,
+            store,
+            EntityMatcher(config.entity_matcher),
+            ScoringEngine(config.scoring),
+        )
+        assert app is not None
+    finally:
         await store.close()
