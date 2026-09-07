@@ -13,7 +13,7 @@
   <p>
     <a href="#license"><img alt="License: AGPL v3" src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" /></a>
     <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB.svg?logo=python&logoColor=white" />
-    <img alt="Status" src="https://img.shields.io/badge/status-v0.4.0-orange.svg" />
+    <img alt="Status" src="https://img.shields.io/badge/status-v0.5.0-orange.svg" />
     <img alt="Patent Pending" src="https://img.shields.io/badge/Patent-Pending-orange" />
     <img alt="Async" src="https://img.shields.io/badge/built%20with-asyncio-009688.svg" />
     <a href="#contributing"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" /></a>
@@ -181,6 +181,13 @@ Or install the published package:
 pip install revok
 ```
 
+The default install is dependency-free. Two opt-in extras are available:
+
+```bash
+pip install "revok[falkordb-lite]"   # FalkorDB Lite graph backend
+pip install "revok[redis]"           # durable Redis Streams signal ingest
+```
+
 ### Configure
 
 ```bash
@@ -274,8 +281,29 @@ curl -X POST http://localhost:8080/signals \
 Revok returns `202 Accepted` immediately and processes the signal asynchronously —
 zero impact on your agent read or write latency.
 
+If you don't know which entity a change touches, send free text instead and let a
+resolver map it to the affected nodes:
+
+```bash
+curl -X POST http://localhost:8080/signals \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signal_text": "Redis Enterprise pricing changed",
+    "severity": "high",
+    "source": "webhook"
+  }'
+```
+
+Explicit `entity_refs` always take precedence and bypass the resolver. Free-text
+signals require a resolver to be injected by the host application — Revok ships
+the protocol, not an implementation — and return `400 resolver_not_configured`
+when none is present. A signal that matches nothing is still `202`, not an error.
+
 In production, wire this endpoint to an Azure Function trigger, a CDC pipeline, or
-any webhook-capable system.
+any webhook-capable system. For delivery that survives a restart, enable the
+durable Redis Streams source (`pip install "revok[redis]"`) — signals published
+while Revok is down are processed on start, and anything unacknowledged at a
+crash is redelivered.
 
 ---
 
@@ -431,6 +459,11 @@ read-only API for inspecting confidence state:
 | `GET`    | `/v1/entities`                | Paginated list of all entity records |
 | `GET`    | `/v1/entities/{entity_key}`   | Live time-recovered confidence score |
 | `DELETE` | `/v1/entities/{entity_key}`   | Remove an entity record              |
+| `POST`   | `/v1/graph/relationships`     | Register a causal edge at runtime (idempotent upsert) |
+| `GET`    | `/v1/resolver/traces`         | Recent resolution traces, paginated  |
+| `GET`    | `/v1/resolver/traces/{signal_id}` | One resolution trace, with propagation path |
+| `GET`    | `/v1/signals/dead-letters`    | Signals set aside after exceeding the retry bound |
+| `GET`    | `/v1/signals/dead-letters/{signal_id}` | One dead-letter record          |
 | `*`      | `/{any other path}`           | Transparently proxied to the store   |
 
 To attach a signal to a write, send the entity with the request header:
@@ -603,8 +636,8 @@ is planned for a future release if usage reveals additional API-shape mismatches
 
 | Source            | Tier       |
 |-------------------|------------|
-| Webhooks          | OSS        |
-| Redis Streams     | OSS        |
+| Webhooks          | OSS — ✅ v0.1.0 |
+| Redis Streams     | OSS — ✅ v0.5.0 |
 | Azure Event Hubs  | Enterprise |
 | AWS EventBridge   | Enterprise |
 | Google Pub/Sub    | Enterprise |
@@ -642,4 +675,5 @@ Core mechanisms are patent pending.
 
 ## Status
 
-`v0.2.0` — Mem0 + Zep adapters. Production use at your own risk. Feedback welcome.
+`v0.5.0` — Mem0 + Zep adapters, causal propagation, inspector, resolver protocol,
+and durable Redis Streams ingest. Production use at your own risk. Feedback welcome.

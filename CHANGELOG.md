@@ -7,6 +7,88 @@ Revok uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.5.0] — 2026-09-06
+
+### Added
+
+#### Resolver protocol for exogenous signals
+- `Resolver` protocol — maps free-text external signals to causal graph nodes.
+  No concrete resolver ships with Revok; the protocol is
+  implementation-agnostic and an implementation is injected by the host
+  application.
+- `POST /signals` accepts a `signal_text` field, resolved to target nodes at
+  ingestion. Explicit `entity_refs` continue to take precedence and bypass the
+  resolver entirely, so existing callers are unaffected.
+- Root pressure is scaled by resolution confidence —
+  `pressure_for_severity(severity) * target.confidence`. Scaling applies at the
+  root only; downstream attenuation is unchanged. Explicit `entity_refs` are
+  treated as confidence `1.0`.
+- Durable resolution traces recording signal text, resolved targets with
+  confidences and rationales, resulting invalidation events, and the full
+  propagation path — per-node BFS depth, edge weight, and effective pressure —
+  plus a per-traversal termination reason (`completed`, `min_pressure`, or
+  `max_hops`). Without the termination reason, "reached the target", "stopped
+  early due to attenuation", and "target was never reachable" are
+  indistinguishable.
+  - `GET /v1/resolver/traces` — recent traces, paginated
+  - `GET /v1/resolver/traces/{signal_id}` — single trace
+- Runtime causal relationship registration via `POST /v1/graph/relationships`,
+  an idempotent upsert: re-posting a source→target pair with a different weight
+  updates it (last write wins) and returns 200 rather than a conflict.
+
+#### SignalSource protocol with durable ingest
+- `SignalSource` protocol as the single ingestion abstraction (`receive`,
+  `ack`, `close`). HTTP is now one implementation of it — request shapes,
+  status codes, and resolver behaviour are unchanged, so there is no
+  user-visible difference.
+- Durable Redis Streams source (`revok/redis_source.py`) behind the optional
+  `redis` extra (`pip install revok[redis]`). Consumer groups provide
+  at-least-once delivery: entries remain pending until acknowledged, so signals
+  published while Revok is down are processed on start, and entries left
+  unacknowledged by a crash are redelivered.
+- Idempotent processing keyed by `signal_id`, stored independently of trace
+  storage. Trace recording is gated by `inspector.signal_history_enabled`;
+  keeping deduplication separate means disabling tracing cannot silently
+  disable idempotency.
+- Bounded retries with queryable dead-letter records. A repeatedly failing
+  signal is set aside after a configurable number of attempts (default 3) and
+  the stream advances, so one bad signal cannot block every later one. The
+  record retains payload, attempt count, and failure reason.
+  - `GET /v1/signals/dead-letters` — recent dead letters, paginated
+  - `GET /v1/signals/dead-letters/{signal_id}` — single record
+- Per-entity locking with sorted acquisition over the union of root and
+  propagation-set keys. Same-entity signals apply in arrival order regardless
+  of which source delivered them, while unrelated entities continue to process
+  concurrently. Sorted acquisition keeps overlapping key sets deadlock-free.
+- New config sections: `sources` (`http`, `redis_streams`) and `ingestion`
+  (`dedupe_max_rows`, default `100000`; `max_concurrent_signals`, default `16`).
+
+### Changed
+- `SignalProcessor.process_one` returns a `ProcessingOutcome`
+  (`applied` / `duplicate` / `failed`) so a source knows whether to acknowledge.
+  It still logs and swallows per-entity failures rather than raising, leaving
+  existing callers unaffected.
+- `GraphBackend` gained `propagate_detailed`, returning traversal metadata and a
+  termination reason. The existing `propagate` mapping contract is unchanged,
+  and both NetworkX and FalkorDB Lite implement the new method with identical
+  observable semantics.
+- `interfaces.py` gained the `Resolver`, `ResolverTraceStore`, `DedupeStore`,
+  and `DeadLetterStore` protocols; the previously unused `SignalSource`
+  protocol gained `ack` and is now implemented.
+- `Resolver` and `SignalSource` are now exported from the package root
+  (`from revok import Resolver, SignalSource`) alongside `GraphBackend`. Both
+  are primary integration points — a host implements `Resolver` to use
+  free-text signal resolution and `SignalSource` for custom ingest. The
+  remaining protocols stay under `revok.interfaces`.
+
+### Notes
+- `pip install revok` remains dependency-free. Redis Streams ingest is an
+  optional extra mirroring the existing `falkordb-lite` pattern — importing the
+  module without the extra installed is safe, and the resulting error names both
+  the extra and the install command.
+
+---
+
 ## [0.4.0] — 2026-08-25
 
 ### Added
@@ -256,6 +338,7 @@ scaffold, and the Mem0 memory adapter.
 
 ---
 
+[0.5.0]: https://github.com/revok-ai/revok/releases/tag/v0.5.0
 [0.4.0]: https://github.com/revok-ai/revok/releases/tag/v0.4.0
 [0.3.0]: https://github.com/revok-ai/revok/releases/tag/v0.3.0
 [0.2.0]: https://github.com/revok-ai/revok/releases/tag/v0.2.0
